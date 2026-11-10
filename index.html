@@ -171,7 +171,21 @@ const SCENARIOS = [
 const st = { scenario: SCENARIOS[0], turns: [], weak: {}, view: [], busy: false, recording: false };
 let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
-log('--- apertura ---', navigator.userAgent.slice(0, 120));
+const BUILD = '2026-11-10.8';
+// one address, always the latest version: drop any ?v=… and, if the server has a newer page than the one Safari kept, fetch it and reload once
+if (location.search) history.replaceState(null, '', location.pathname + location.hash);
+async function checkUpdate() {
+  try {
+    if (location.protocol === 'file:') return false;
+    const html = await (await fetch(location.pathname + '?t=' + Date.now(), { cache: 'no-store' })).text();
+    const m = html.match(/const BUILD = '([^']+)'/);
+    if (!m || m[1] === BUILD || sessionStorage.getItem('sc.upd') === m[1]) return false;
+    sessionStorage.setItem('sc.upd', m[1]);
+    await fetch(location.pathname, { cache: 'reload' });
+    location.reload(); return true;
+  } catch (e) { return false; }
+}
+log('--- apertura --- versione', BUILD, navigator.userAgent.slice(0, 120));
 const crashed = store.get('sc.busy');
 const loadCrash = store.get('sc.loading');
 if (loadCrash) { log('ATTENZIONE: la pagina si è chiusa mentre caricava i modelli'); store.del('sc.loading'); }
@@ -732,7 +746,9 @@ if (loadCrash || crashed) $('diag').open = true;
 if (loadCrash) {   // do not retry on our own: that is what makes Safari give up on the page
   $('setup').open = true;
   fail('La pagina si è chiusa mentre caricava i modelli: occupavano troppa memoria. Ora è selezionato il modello dei suoni leggero. Premi "Carica i modelli" per riprovare.');
-} else if (store.get('sc.loaded') && soundMode() === 'light') { $('setup').open = !$('key').value; loadAll(); }
+} else checkUpdate().then(updating => {
+  if (!updating && store.get('sc.loaded') && soundMode() === 'light') { $('setup').open = !$('key').value; loadAll(); }
+});
 </script>
 </body>
 </html>
