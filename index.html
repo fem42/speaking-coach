@@ -82,7 +82,7 @@ details>summary{cursor:pointer;font-weight:600}
 <main>
   <div>
     <h1>Speaking <span>Coach</span></h1>
-    <p class="muted small">Rispondi a voce in inglese. I modelli audio ascoltano i suoni che produci; Claude porta avanti il dialogo.</p>
+    <p class="muted small">Rispondi a voce, in inglese o in tedesco. I modelli audio ascoltano i suoni che produci; Claude porta avanti il dialogo.</p>
   </div>
 
   <div class="err" id="err" hidden></div>
@@ -96,8 +96,9 @@ details>summary{cursor:pointer;font-weight:600}
       <input type="password" id="key" autocomplete="off" placeholder="sk-ant-…"></label>
     <p class="muted small">La chiave resta salvata solo in questo browser e viene inviata soltanto ad Anthropic. Si crea nella console per sviluppatori di Anthropic ed è a consumo.</p>
     <div class="row">
+      <label class="field"><span class="label">Lingua</span><select id="lang"><option value="en">Inglese</option><option value="de">Tedesco (corso fide)</option></select></label>
       <label class="field"><span class="label">Situazione</span><select id="scenario"></select></label>
-      <label class="field"><span class="label">Livello</span><select id="level"><option>A2</option><option selected>B1</option><option>B2</option><option>C1</option></select></label>
+      <label class="field"><span class="label">Livello</span><select id="level"><option>A1</option><option>A2</option><option selected>B1</option><option>B2</option><option>C1</option></select></label>
       <label class="field"><span class="label">Modello Claude</span><select id="model"><option value="claude-haiku-5-5">Haiku (veloce)</option><option value="claude-sonnet-5-5">Sonnet (più preciso)</option></select></label>
     </div>
     <label class="field"><span class="label">Modello dei suoni</span><select id="sound"><option value="light">Leggero (telefono)</option><option value="full">Dettagliato (solo computer, molto pesante)</option></select></label>
@@ -105,6 +106,7 @@ details>summary{cursor:pointer;font-weight:600}
     <p class="muted small" id="store-note"></p>
   </details>
 
+  <p class="panel small" id="sit" hidden></p>
   <section class="chat" id="chat" aria-live="polite"></section>
 
   <section class="panel" id="weak-panel" hidden>
@@ -148,7 +150,10 @@ const fail = (msg, e) => { $('err').hidden = false; $('err').textContent = msg; 
 const clearErr = () => { $('err').hidden = true; };
 
 const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2';
-const ASR_ID = 'Xenova/whisper-base.en';
+const ASR_IDS = { en: 'Xenova/whisper-base.en', de: 'Xenova/whisper-base' };   // German needs the multilingual Whisper
+const lang = () => store.get('sc.lang') === 'de' ? 'de' : 'en';
+const soundOn = () => lang() === 'en';   // the light sound model only knows English
+const chatKey = () => lang() === 'de' ? 'sc.chat.de' : 'sc.chat';
 const PH_ID = 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX';
 const PH_DTYPES = ['q8', 'q4', 'fp16', 'fp32'];
 // light sound model: wav2vec2-base, hears English letter by letter; about a third of the size of the phoneme model
@@ -168,10 +173,196 @@ const SCENARIOS = [
 ];
 
 // view = what is on screen, in order: {type:'them', text} | {type:'me', text, r, scored, flu, err, soundErr}
-const st = { scenario: SCENARIOS[0], turns: [], weak: {}, view: [], busy: false, recording: false };
+// the 26 themes of the fide A1–A2 course: role = the role-play situation of each lesson, open = the examiner's first line
+const DE_SCENARIOS = [
+ {
+  "id": "de1",
+  "name": "1 · Mi presento",
+  "lv": "A1",
+  "role": "Incontri per la prima volta il tuo nuovo vicino di casa sulle scale. Rispondi alle sue domande.",
+  "open": "Grüezi! Ich bin Ihr Nachbar, Peter Huber. Und Sie?"
+ },
+ {
+  "id": "de2",
+  "name": "2 · La mia famiglia",
+  "lv": "A1",
+  "role": "In pausa, una collega ti fa domande sulla tua famiglia.",
+  "open": "Haben Sie Familie?"
+ },
+ {
+  "id": "de3",
+  "name": "3 · Fare la spesa",
+  "lv": "A1",
+  "role": "Sei al mercato e compri frutta e formaggio.",
+  "open": "Grüezi, was darf es sein?"
+ },
+ {
+  "id": "de4",
+  "name": "4 · La casa",
+  "lv": "A1",
+  "role": "Telefoni per l'annuncio di un appartamento. Qui sei TU a fare le domande.",
+  "open": "Grüezi, Huber."
+ },
+ {
+  "id": "de5",
+  "name": "5 · Orari e appuntamenti",
+  "lv": "A1",
+  "role": "Prendi un appuntamento dal parrucchiere (Coiffeur) al telefono.",
+  "open": "Coiffeur Bella, grüezi."
+ },
+ {
+  "id": "de6",
+  "name": "6 · Treno e tram",
+  "lv": "A1",
+  "role": "Allo sportello della stazione compri un biglietto per Basilea.",
+  "open": "Grüezi, bitte?"
+ },
+ {
+  "id": "de7",
+  "name": "7 · Dal medico",
+  "lv": "A1",
+  "role": "Sei dal medico e spieghi cosa hai.",
+  "open": "Grüezi. Was fehlt Ihnen?"
+ },
+ {
+  "id": "de8",
+  "name": "8 · Al Comune",
+  "lv": "A1",
+  "role": "Sei allo sportello del Comune per annunciarti (anmelden).",
+  "open": "Grüezi, was kann ich für Sie tun?"
+ },
+ {
+  "id": "de9",
+  "name": "9 · Posta e banca",
+  "lv": "A1",
+  "role": "Alla posta spedisci un pacco in Italia.",
+  "open": "Grüezi, bitte?"
+ },
+ {
+  "id": "de10",
+  "name": "10 · Il lavoro",
+  "lv": "A1",
+  "role": "Un nuovo collega ti chiede del tuo lavoro.",
+  "open": "Was machen Sie hier?"
+ },
+ {
+  "id": "de11",
+  "name": "11 · Scuola e figli",
+  "lv": "A1",
+  "role": "Davanti alla scuola parli con un altro genitore.",
+  "open": "In welche Klasse geht Ihr Kind?"
+ },
+ {
+  "id": "de12",
+  "name": "12 · Tempo libero",
+  "lv": "A1",
+  "role": "Un collega ti chiede cosa fai nel tempo libero.",
+  "open": "Was machen Sie gern in der Freizeit?"
+ },
+ {
+  "id": "de13",
+  "name": "13 · La mia storia",
+  "lv": "A2",
+  "role": "Una consulente per l'integrazione ti fa domande sul tuo passato.",
+  "open": "Was haben Sie in Ihrem Heimatland gemacht?"
+ },
+ {
+  "id": "de14",
+  "name": "14 · Weekend e gite",
+  "lv": "A2",
+  "role": "Lunedì mattina in ufficio: una collega ti chiede del weekend.",
+  "open": "Wie war Ihr Wochenende?"
+ },
+ {
+  "id": "de15",
+  "name": "15 · Cercare casa",
+  "lv": "A2",
+  "role": "Alla visita dell'appartamento fai domande alla gerente.",
+  "open": "Grüezi, willkommen. Haben Sie Fragen zur Wohnung?"
+ },
+ {
+  "id": "de16",
+  "name": "16 · Problemi in casa",
+  "lv": "A2",
+  "role": "Telefoni al custode perché il riscaldamento non funziona.",
+  "open": "Zbinden, grüezi."
+ },
+ {
+  "id": "de17",
+  "name": "17 · Spostarsi",
+  "lv": "A2",
+  "role": "Allo sportello della stazione chiedi quale abbonamento conviene.",
+  "open": "Grüezi, wie kann ich helfen?"
+ },
+ {
+  "id": "de18",
+  "name": "18 · Lavoro: candidatura",
+  "lv": "A2",
+  "role": "Sei al colloquio di lavoro.",
+  "open": "Erzählen Sie etwas über sich."
+ },
+ {
+  "id": "de19",
+  "name": "19 · Il trasloco",
+  "lv": "A2",
+  "role": "Organizzi il trasloco insieme a un amico. Dovete decidere insieme.",
+  "open": "Wann sollen wir die Umzugsfirma anrufen?"
+ },
+ {
+  "id": "de20",
+  "name": "20 · Permesso e uffici",
+  "lv": "A2",
+  "role": "Telefoni all'ufficio della migrazione per una domanda sul rinnovo.",
+  "open": "Migrationsamt, Sie sprechen mit Frau Lüthi."
+ },
+ {
+  "id": "de21",
+  "name": "21 · La scuola dei figli",
+  "lv": "A2",
+  "role": "Colloquio con la maestra di tua figlia Mia.",
+  "open": "Grüezi, schön, dass Sie da sind. Wie geht es Mia zu Hause?"
+ },
+ {
+  "id": "de22",
+  "name": "22 · Salute e farmacia",
+  "lv": "A2",
+  "role": "Telefoni allo studio: vuoi un appuntamento urgente per tuo figlio.",
+  "open": "Praxis Dr. Meier, grüezi."
+ },
+ {
+  "id": "de23",
+  "name": "23 · Inviti e feste",
+  "lv": "A2",
+  "role": "Tu e un'amica decidete insieme cosa fare sabato.",
+  "open": "Was machen wir am Samstag?"
+ },
+ {
+  "id": "de24",
+  "name": "24 · Regole e vicini",
+  "lv": "A2",
+  "role": "Il vicino ti fa notare che hai usato un sacco sbagliato. Scusati e chiedi informazioni.",
+  "open": "Entschuldigung, ist das Ihr Abfallsack? Das ist kein Gebührensack!"
+ },
+ {
+  "id": "de25",
+  "name": "25 · Simulazione d'esame 1",
+  "lv": "SIM",
+  "role": "Con un collega organizzate un pranzo d'addio per Frau Keller, che va in pensione. Decidete insieme: dove, regalo, chi prenota.",
+  "open": "Frau Keller geht nächsten Monat in Pension. Wollen wir etwas organisieren?"
+ },
+ {
+  "id": "de26",
+  "name": "26 · Simulazione d'esame 2",
+  "lv": "SIM",
+  "role": "Telefoni a una scuola di lingue: chiedi informazioni su un corso A2 (inizio, giorni, prezzo, test d'ingresso).",
+  "open": "Sprachschule Atlas, guten Tag."
+ }
+];
+const scenarios = () => lang() === 'de' ? DE_SCENARIOS : SCENARIOS;
+const st = { scenario: scenarios()[0], turns: [], weak: {}, view: [], busy: false, recording: false };
 let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
-const BUILD = '2026-11-10.11';
+const BUILD = '2026-11-10.12';
 // one address, always the latest version: drop any ?v=… and, if the server has a newer page than the one Safari kept, fetch it and reload once
 if (location.search) history.replaceState(null, '', location.pathname + location.hash);
 async function checkUpdate() {
@@ -381,11 +572,12 @@ async function loadAll() {
     const files = await storageReport();
     const from = id => inCache(files, id) ? 'leggo dal telefono…' : 'scarico…';
     if (!asr) {
-      $('s-asr').textContent = from(ASR_ID); log('inizio whisper,', from(ASR_ID));
-      asr = await T.pipeline('automatic-speech-recognition', ASR_ID, { dtype: 'q8', device: 'wasm', progress_callback: progressFor('asr') });
+      $('s-asr').textContent = from(ASR_IDS[lang()]); log('inizio whisper', lang(), from(ASR_IDS[lang()]));
+      asr = await T.pipeline('automatic-speech-recognition', ASR_IDS[lang()], { dtype: 'q8', device: 'wasm', progress_callback: progressFor('asr') });
       ready('asr'); log('whisper pronto');
     }
-    if (!ph) {
+    if (!soundOn()) { $('s-ph').textContent = 'non usato per il tedesco'; }
+    if (!ph && soundOn()) {
      if (soundMode() === 'light') {
       $('s-ph').textContent = from(LIGHT_ID); log('inizio modello suoni leggero,', from(LIGHT_ID));
       vocab = LIGHT_VOCAB; blankId = 0;
@@ -417,7 +609,7 @@ async function loadAll() {
     }
     $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.'; store.set('sc.loaded', '1'); store.del('sc.loading');
     const after = await storageReport();
-    if (!inCache(after, soundId())) { log('ATTENZIONE: il modello dei fonemi non è rimasto in cache'); $('store-note').textContent = 'Questo browser non è riuscito a salvare il modello dei suoni: verrà riscaricato a ogni apertura.'; }
+    if (soundOn() && !inCache(after, soundId())) { log('ATTENZIONE: il modello dei fonemi non è rimasto in cache'); $('store-note').textContent = 'Questo browser non è riuscito a salvare il modello dei suoni: verrà riscaricato a ogni apertura.'; }
     refresh();
   } catch (e) {
     fail('Non sono riuscito a caricare i modelli. Se succede di nuovo, premi "Cancella i modelli salvati" in Impostazioni e ricarica la pagina.', e);
@@ -466,15 +658,17 @@ async function callClaude({ system, messages, max_tokens }) {
   return (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
 }
 function replySystem() {
+  const de = lang() === 'de', LN = de ? { a: 'a German', name: 'German' } : { a: 'an English', name: 'English' };
+  const roleLine = de ? `The learner is preparing the Swiss fide language test. Role-play this situation from their course (described in Italian): "${st.scenario.role}". You play the other person; the learner plays themselves. Use standard German as written in Switzerland: "ss" instead of "ß", and Swiss words where natural (Grüezi, Velo, Billett). Use the polite form "Sie" unless the situation is between friends.` : `Role-play as ${st.scenario.role}.`;
   const weak = Object.entries(st.weak).sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
-  return `You are an English speaking coach inside a practice app for an Italian native speaker (CEFR level ${$('level').value}).
-Role-play as ${st.scenario.role}. Keep the conversation going naturally in English at the learner's level.
+  return `You are ${LN.a} speaking coach inside a practice app for an Italian native speaker (CEFR level ${$('level').value}).
+${roleLine} Keep the conversation going naturally in ${LN.name} at the learner's level.
 Each user message is an automatic transcript of what the learner said aloud. A separate audio model scores their sounds, so you never comment on pronunciation.
-${weak.length ? `The learner currently struggles with these English sounds: ${weak.join(', ')}. Steer your questions so that natural answers need words containing them.\n` : ''}
+${weak.length && !de ? `The learner currently struggles with these English sounds: ${weak.join(', ')}. Steer your questions so that natural answers need words containing them.\n` : ''}
 Reply with ONLY a JSON object, no markdown fences, in exactly this shape:
 {"reply": string, "improved": string, "praise": string, "notes": [{"type": "grammar"|"word", "you": string, "better": string, "why": string}]}
 
-- "reply": your next line in the role-play, in English, 1-3 short sentences, usually ending with a question. Never correct the learner here.
+- "reply": your next line in the role-play, in ${LN.name}, 1-3 short sentences, usually ending with a question. Never correct the learner here.
 - "improved": the learner's message as a fluent native speaker would say it; "" if it was already natural.
 - "praise": one short sentence in Italian about something specific they did well.
 - "notes": at most 3 real grammar or word-choice problems, most useful first; "you" = their exact words, "better" = the fix, "why" = one sentence in Italian. Ignore punctuation and capitalisation.`;
@@ -521,9 +715,10 @@ function speak(text) {
   if (!('speechSynthesis' in window) || !text) return;
   try {
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text); u.lang = 'en-US'; u.rate = 0.95;
-    const v = speechSynthesis.getVoices().filter(x => /^en[-_]/i.test(x.lang));
-    const pick = v.find(x => /en[-_]US/i.test(x.lang) && x.localService) || v.find(x => /en[-_]US/i.test(x.lang)) || v[0];
+    const u = new SpeechSynthesisUtterance(text); const de = lang() === 'de'; u.lang = de ? 'de-DE' : 'en-US'; u.rate = de ? 0.9 : 0.95;
+    const v = speechSynthesis.getVoices().filter(x => (de ? /^de[-_]/i : /^en[-_]/i).test(x.lang));
+    const main = de ? /de[-_]DE/i : /en[-_]US/i;
+    const pick = v.find(x => main.test(x.lang) && x.localService) || v.find(x => main.test(x.lang)) || v[0];
     if (pick) u.voice = pick;
     speechSynthesis.speak(u);
   } catch (e) {}
@@ -533,7 +728,7 @@ function unlockSpeech() { if (unlocked || !('speechSynthesis' in window)) return
 
 /* ===================== state on screen ===================== */
 function save() {
-  store.set('sc.chat', JSON.stringify({ scenario: st.scenario.id, turns: st.turns.slice(-24), weak: st.weak, view: st.view.slice(-30) }));
+  store.set(chatKey(), JSON.stringify({ scenario: st.scenario.id, turns: st.turns.slice(-24), weak: st.weak, view: st.view.slice(-30) }));
 }
 const toEnd = () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
 function themBubble(text) {
@@ -577,7 +772,8 @@ function renderTurn(turn, rec) {
     again.onclick = () => retrySentence(again, note, turn, rec);
     row.append(again, note); fb.append(row);
     if (rec.retryMsg) fb.append(el('div', 'err small', rec.retryMsg));
-  } else if (rec.soundErr) fb.append(el('div', 'err small', rec.soundErr));
+  } else if (rec.noSound) fb.append(el('div', 'muted small', 'Suoni non valutati: il modello dei suoni per il tedesco non è ancora disponibile.'));
+  else if (rec.soundErr) fb.append(el('div', 'err small', rec.soundErr));
   else fb.append(el('div', 'thinking', 'Valuto i suoni…'));
   // reply feedback
   const r = rec.r;
@@ -674,20 +870,21 @@ function renderAll() {
   }
   renderWeak();
 }
-function resetTalk() { st.turns = []; st.weak = {}; st.view = []; $('chat').replaceChildren(); pushThem(st.scenario.open); renderWeak(); save(); }
+const showSit = () => { const de = lang() === 'de'; $('sit').hidden = !de; if (de) $('sit').textContent = 'Situazione: ' + st.scenario.role; };
+function resetTalk() { showSit(); st.turns = []; st.weak = {}; st.view = []; $('chat').replaceChildren(); pushThem(st.scenario.open); renderWeak(); save(); }
 function restore() {
   try {
-    const s = JSON.parse(store.get('sc.chat') || 'null'); if (!s || !Array.isArray(s.view) || !s.view.length) return false;
-    st.scenario = SCENARIOS.find(x => x.id === s.scenario) || SCENARIOS[0]; st.turns = s.turns || []; st.weak = s.weak || {}; st.view = s.view;
+    const s = JSON.parse(store.get(chatKey()) || 'null'); if (!s || !Array.isArray(s.view) || !s.view.length) return false;
+    st.scenario = scenarios().find(x => x.id === s.scenario) || scenarios()[0]; st.turns = s.turns || []; st.weak = s.weak || {}; st.view = s.view;
     for (const it of st.view) if (it.type === 'me') {   // anything left pending was cut off by a reload
       if (!it.r && !it.err) it.err = 'La pagina si è ricaricata prima della risposta.';
-      if (!it.scored && !it.soundErr) it.soundErr = 'La pagina si è ricaricata durante l\'analisi dei suoni.';
+      if (!it.scored && !it.soundErr && !it.noSound) it.soundErr = 'La pagina si è ricaricata durante l\'analisi dei suoni.';
     }
-    $('scenario').value = st.scenario.id; renderAll(); return true;
+    $('scenario').value = st.scenario.id; showSit(); renderAll(); return true;
   } catch (e) { return false; }
 }
 function refresh() {
-  const modelsOk = !!(asr && ph), keyOk = $('key').value.trim().length > 10;
+  const modelsOk = !!(asr && (ph || !soundOn())), keyOk = $('key').value.trim().length > 10;
   $('rec').disabled = !modelsOk || !keyOk || st.busy;
   $('rec').classList.toggle('on', st.recording);
   const t = $('rec-title'), n = $('rec-note');
@@ -695,7 +892,7 @@ function refresh() {
   else if (st.busy) { t.textContent = 'Analizzo la tua voce…'; n.textContent = 'Qualche secondo.'; }
   else if (!modelsOk) { t.textContent = 'Carica prima i modelli'; n.textContent = 'Premi "Carica i modelli" in Impostazioni.'; }
   else if (!keyOk) { t.textContent = 'Manca la chiave API'; n.textContent = 'Inseriscila in Impostazioni per avere il dialogo.'; }
-  else { t.textContent = 'Premi e rispondi in inglese'; n.textContent = `Parla liberamente, fino a ${MAX_REC_S} secondi.`; }
+  else { t.textContent = 'Premi e rispondi in ' + (lang() === 'de' ? 'tedesco' : 'inglese'); n.textContent = `Parla liberamente, fino a ${MAX_REC_S} secondi.`; }
 }
 
 /* ===================== recording + turn ===================== */
@@ -729,6 +926,7 @@ async function doReply(turn, r) {
   save();
 }
 async function doSounds(turn, r, audio) {
+  if (!soundOn()) { r.noSound = true; renderTurn(turn, r); save(); return; }
   try {
     const light = soundMode() === 'light';
     const [exp, got] = await Promise.all([light ? lettersOf(r.text) : askPhonemes(r.text), phones(audio)]);
@@ -758,7 +956,7 @@ async function handleAudio(blob) {
     if (secs < 0.6) { stop('Registrazione troppo corta. Tieni premuto il tempo di una frase.'); return; }
     let text = '';
     try {
-      const a = await asr(audio, secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {});
+      const a = await asr(audio, Object.assign(secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {}, lang() === 'de' ? { language: 'german', task: 'transcribe' } : {}));
       text = (a.text || '').replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim();
     } catch (e) { log('whisper ERRORE', String(e.message || e).slice(0, 300)); stop('Il modello che riconosce le parole non è riuscito ad analizzare l\'audio. Riprova con una frase più breve.'); return; }
     log('whisper:', text);
@@ -772,14 +970,40 @@ async function handleAudio(blob) {
 }
 
 /* ===================== boot ===================== */
-for (const s of SCENARIOS) { const o = el('option', '', s.name); o.value = s.id; $('scenario').append(o); }
+function fillScenarios() {
+  const sel = $('scenario'); sel.replaceChildren();
+  if (lang() === 'de') {
+    const groups = { A1: 'Livello A1', A2: 'Livello A2', SIM: "Simulazioni d'esame" };
+    for (const lv of Object.keys(groups)) {
+      const g = document.createElement('optgroup'); g.label = groups[lv];
+      DE_SCENARIOS.filter(x => x.lv === lv).forEach(x => { const o = el('option', '', x.name); o.value = x.id; g.append(o); });
+      sel.append(g);
+    }
+  } else for (const x of SCENARIOS) { const o = el('option', '', x.name); o.value = x.id; sel.append(o); }
+  $('sound').disabled = !soundOn();
+}
+function levelFor(sc) { if (sc.lv) { $('level').value = sc.lv === 'A1' ? 'A1' : 'A2'; store.set('sc.level', $('level').value); } }
+$('lang').value = lang();
+fillScenarios();
+$('lang').onchange = () => {   // each language has its own Whisper model, themes and saved conversation
+  if (st.busy || st.recording) { $('lang').value = lang(); return; }
+  store.set('sc.lang', $('lang').value);
+  try { asr && asr.dispose && asr.dispose(); } catch (e) {}
+  asr = null; $('p-asr').value = 0; $('s-asr').textContent = 'non caricato'; $('s-asr').className = 'state';
+  if (!soundOn()) { try { ph && ph.dispose && ph.dispose(); } catch (e) {} ph = null; $('p-ph').value = 0; $('s-ph').textContent = 'non usato per il tedesco'; $('s-ph').className = 'state'; }
+  else if (!ph) { $('s-ph').textContent = 'non caricato'; }
+  fillScenarios(); st.scenario = scenarios()[0];
+  if (!restore()) { levelFor(st.scenario); resetTalk(); }
+  $('load').hidden = false; $('load').disabled = false; $('load-note').textContent = 'Premi per caricare i modelli di questa lingua.';
+  log('lingua:', lang()); refresh();
+};
 $('key').value = store.get('sc.key');
 $('model').value = store.get('sc.model') || 'claude-haiku-5-5'; if ($('model').selectedIndex < 0) $('model').selectedIndex = 0;
 $('level').value = store.get('sc.level') || 'B1'; if ($('level').selectedIndex < 0) $('level').value = 'B1';
 $('key').oninput = () => { store.set('sc.key', $('key').value.trim()); refresh(); };
 $('model').onchange = () => store.set('sc.model', $('model').value);
 $('level').onchange = () => store.set('sc.level', $('level').value);
-$('scenario').onchange = e => { st.scenario = SCENARIOS.find(s => s.id === e.target.value) || SCENARIOS[0]; resetTalk(); };
+$('scenario').onchange = e => { st.scenario = scenarios().find(s => s.id === e.target.value) || scenarios()[0]; levelFor(st.scenario); resetTalk(); };
 $('restart').onclick = () => { if (!st.busy && !st.recording) resetTalk(); };
 $('load').onclick = loadAll;
 $('sound').value = soundMode();
