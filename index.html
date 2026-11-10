@@ -171,7 +171,7 @@ const SCENARIOS = [
 const st = { scenario: SCENARIOS[0], turns: [], weak: {}, view: [], busy: false, recording: false };
 let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
-const BUILD = '2026-11-10.9';
+const BUILD = '2026-11-10.10';
 // one address, always the latest version: drop any ?v=… and, if the server has a newer page than the one Safari kept, fetch it and reload once
 if (location.search) history.replaceState(null, '', location.pathname + location.hash);
 async function checkUpdate() {
@@ -319,7 +319,22 @@ function tipLetters(x) {
   });
   return out;
 }
-window.__pure = { lettersOf, tipLetters, segs, align, scoreWords, fluency, chunkBounds, parsePhonemeLines };
+// where the voice is in a short clip: {a, b, peak} in samples, or null when there is only silence
+function speechRegion(audio) {
+  const F = 320, n = Math.floor(audio.length / F), rms = new Float32Array(n); let peak = 0;
+  for (let f = 0; f < n; f++) { let e = 0; for (let i = f * F; i < (f + 1) * F; i++) e += audio[i] * audio[i]; rms[f] = Math.sqrt(e / F); if (rms[f] > peak) peak = rms[f]; }
+  if (peak < 0.008) return null;
+  const thr = Math.max(0.006, 0.15 * peak); let first = -1, last = -1;
+  for (let f = 0; f < n; f++) if (rms[f] > thr) { if (first < 0) first = f; last = f; }
+  if (first < 0 || (last - first + 1) * F < 0.12 * SR) return null;
+  return { a: Math.max(0, first * F - 0.25 * SR), b: Math.min(audio.length, (last + 1) * F + 0.25 * SR), peak };
+}
+// cut to the voice and surround it with half a second of silence: the sound model copes badly with a bare, clipped word
+function padClip(audio, reg) {
+  const pad = 0.5 * SR, cut = audio.subarray(reg.a, reg.b), out = new Float32Array(cut.length + 2 * pad);
+  out.set(cut, pad); return out;
+}
+window.__pure = { speechRegion, padClip, lettersOf, tipLetters, segs, align, scoreWords, fluency, chunkBounds, parsePhonemeLines };
 
 /* ===================== storage ===================== */
 const CACHE = 'transformers-cache';
@@ -615,14 +630,26 @@ async function retryWord(btn, note, x, turn, rec, xi) {
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
   catch (e) { note.textContent = 'Microfono non accessibile.'; return; }
   const parts = []; const mr = new MediaRecorder(stream); clip = mr; st.busy = true; refresh();
-  btn.textContent = 'Ferma'; note.textContent = `Di' "${x.w.replace(/[.,!?;:]+$/, '')}" e premi Ferma.`;
-  const timer = setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, 4000);
+  // the microphone needs a moment to open: anything said before "Parla ora" would be lost
+  btn.textContent = 'Ferma'; btn.disabled = true; note.textContent = 'Aspetta…';
+  let timer = null;
+  const go = () => {
+    if (mr.state !== 'recording' || timer) return;
+    btn.disabled = false; note.textContent = `Parla ora: "${x.w.replace(/[.,!?;:]+$/, '')}". Poi premi Ferma.`;
+    timer = setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, 4000);
+  };
+  mr.onstart = () => setTimeout(go, 450);
+  setTimeout(go, 1500);
   mr.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
   mr.onstop = async () => {
     clearTimeout(timer); stream.getTracks().forEach(t => t.stop()); clip = null; btn.disabled = true; btn.textContent = 'Analizzo…';
     try {
       const audio = await decode16k(new Blob(parts, { type: mr.mimeType }));
-      const got = await phones(audio);
+      const reg = speechRegion(audio);
+      log('ripetizione audio', (audio.length / SR).toFixed(2), 's, voce:', reg ? `${(reg.a / SR).toFixed(2)}-${(reg.b / SR).toFixed(2)} s, picco ${reg.peak.toFixed(3)}` : 'nessuna');
+      if (!reg) throw Object.assign(new Error('silenzio'), { user: 'Non ho sentito la voce nella registrazione. Aspetta la scritta "Parla ora" e parla vicino al microfono.' });
+      const got = await phones(padClip(audio, reg));
+      if (!got.length) throw Object.assign(new Error('non riconosciuta'), { user: 'Ho sentito la voce ma non ho riconosciuto la parola. Dilla un po\' più lentamente, a voce piena.' });
       const letters = x.kind === 'letters';
       const exp = (x.p && x.p.length) ? x.p : letters ? lettersOf(x.w)[0].p : x.ops.filter(o => o.exp).map(o => o.exp);
       const res = scoreWords([{ w: x.w, p: exp }], got)[0]; const before = x.score;
@@ -632,7 +659,7 @@ async function retryWord(btn, note, x, turn, rec, xi) {
       x.last = `Tentativo ${x.tries}: ${pct(res.score)}, prima ${pct(before)}. ${better ? 'Meglio.' : res.score === before ? 'Uguale.' : 'Non ancora.'} Ho sentito: ${heard || 'niente'}.`;
       if (better) { x.score = res.score; x.ops = res.ops; }
       log('ripetizione', x.w, '→', heard, pct(res.score));
-    } catch (e) { x.last = 'Non sono riuscito ad analizzare la ripetizione. Riprova.'; log('ripetizione ERRORE', String(e.message || e).slice(0, 200)); }
+    } catch (e) { x.last = e.user || 'Non sono riuscito ad analizzare la ripetizione. Riprova.'; log('ripetizione ERRORE', String(e.message || e).slice(0, 200)); }
     st.busy = false; refresh();
     rec._open = xi; renderTurn(turn, rec); delete rec._open; save();
   };
