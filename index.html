@@ -129,16 +129,27 @@ details>summary{cursor:pointer;font-weight:600}
 /* ===================== helpers ===================== */
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-const log = (...a) => { const t = $('log'); t.value += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; t.scrollTop = t.scrollHeight; };
-const fail = (msg, e) => { $('err').hidden = false; $('err').textContent = msg; log('ERRORE', msg, e ? String(e.stack || e.message || e) : ''); };
+const store = {
+  get: k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} },
+  del: k => { try { localStorage.removeItem(k); } catch (e) {} }
+};
+// the log survives a page reload, so a crash can still be diagnosed afterwards
+let logLines = []; try { logLines = JSON.parse(store.get('sc.log') || '[]'); } catch (e) {}
+const log = (...a) => {
+  const line = new Date().toTimeString().slice(0, 8) + ' ' + a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ');
+  logLines.push(line); if (logLines.length > 200) logLines = logLines.slice(-200);
+  store.set('sc.log', JSON.stringify(logLines));
+  const t = $('log'); t.value = logLines.join('\n'); t.scrollTop = t.scrollHeight;
+};
+const fail = (msg, e) => { $('err').hidden = false; $('err').textContent = msg; $('err').scrollIntoView({ block: 'center' }); log('ERRORE', msg, e ? String(e.stack || e.message || e).slice(0, 400) : ''); };
 const clearErr = () => { $('err').hidden = true; };
-const store = { get: k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 
 const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2';
 const ASR_ID = 'Xenova/whisper-base.en';
 const PH_ID = 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX';
 const PH_DTYPES = ['q8', 'q4', 'fp16', 'fp32'];
-const FRAME_S = 0.02;
+const FRAME_S = 0.02, SR = 16000, MAX_REC_S = 40, CHUNK_S = 8;
 
 const SCENARIOS = [
   { id:'coffee', name:'Al bar', role:'a friendly barista in a London coffee shop', open:"Hi there! Welcome in. What can I get for you today?" },
@@ -149,18 +160,19 @@ const SCENARIOS = [
   { id:'free', name:'Tema libero', role:'a curious, warm conversation partner who follows whatever topic the learner brings up', open:"Hi! What would you like to talk about today?" }
 ];
 
-const st = { scenario: SCENARIOS[0], turns: [], weak: {}, busy: false, recording: false };
+// view = what is on screen, in order: {type:'them', text} | {type:'me', text, r, scored, flu, err, soundErr}
+const st = { scenario: SCENARIOS[0], turns: [], weak: {}, view: [], busy: false, recording: false };
 let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
-log('browser:', navigator.userAgent);
-log('origine:', location.protocol + '//' + location.host, '| cache:', 'caches' in window, '| memoria:', navigator.deviceMemory ?? '?');
+log('--- apertura ---', navigator.userAgent.slice(0, 120));
+const crashed = store.get('sc.busy');
+if (crashed) { log('ATTENZIONE: la pagina si è ricaricata durante un\'analisi iniziata', Math.round((Date.now() - Number(crashed)) / 1000), 's fa'); store.del('sc.busy'); }
 
 /* ===================== phoneme maths (pure) ===================== */
 const UNITS = ['tʃ', 'dʒ', 'eɪ', 'aɪ', 'ɔɪ', 'aʊ', 'oʊ'];
 const VOWELS = new Set(['i', 'ɪ', 'ɛ', 'æ', 'ɑ', 'ɒ', 'ɔ', 'ʊ', 'u', 'ʌ', 'ə', 'ɜ', 'a', 'o', 'eɪ', 'aɪ', 'ɔɪ', 'aʊ', 'oʊ']);
 const NEAR = new Set(['ə|ʌ', 'ə|ɪ', 'ə|ɜ', 'ɑ|ɒ', 'ɔ|ɒ', 'ɑ|ɔ', 'ɑ|a', 'ʌ|a', 'ɾ|t', 'ɾ|d', 'ɹ|r', 'ɹ|ɾ', 'o|oʊ', 'o|ɔ', 'i|j', 'u|w', 'ʊ|ə'].flatMap(p => { const [a, b] = p.split('|'); return [a + '|' + b, b + '|' + a]; }));
 
-// one model/IPA symbol (e.g. "ɑːɹ", "ɚ", "əl", "tʃ") -> canonical atomic segments
 function segs(tok) {
   let s = String(tok).normalize('NFC').replace(/[ːˑˈˌ.̯̩̃͜͡\s]/g, '')
     .replace(/g/g, 'ɡ').replace(/ɚ/g, 'əɹ').replace(/ɝ/g, 'ɜɹ').replace(/ɐ/g, 'ə').replace(/ᵻ/g, 'ɪ')
@@ -177,7 +189,6 @@ function subCost(a, b) {
   if (NEAR.has(a + '|' + b)) return 0.3;
   return VOWELS.has(a) === VOWELS.has(b) ? 1 : 1.4;
 }
-// exp: [{s, w}] expected segments with word index; got: [segment]. Returns per-expected ops plus insertions.
 function align(exp, got) {
   const n = exp.length, m = got.length;
   const delCost = i => (exp[i].s === 'ɹ' && i > 0 && VOWELS.has(exp[i - 1].s) && exp[i - 1].w === exp[i].w) ? 0.3 : 1;
@@ -197,17 +208,13 @@ function align(exp, got) {
   }
   return ops.reverse();
 }
-function scoreWords(words, produced) {   // words: [{w, p:[symbols]}], produced: [symbols]
+function scoreWords(words, produced) {
   const exp = []; words.forEach((x, wi) => (x.p || []).forEach(sym => segs(sym).forEach(s => exp.push({ s, w: wi }))));
-  const got = produced.flatMap(segs);
-  const ops = align(exp, got);
+  const ops = align(exp, produced.flatMap(segs));
   return words.map((x, wi) => {
     const mine = ops.filter(o => o.w === wi);
-    const expN = mine.filter(o => o.exp).length;
-    const good = mine.filter(o => o.st === 'ok' || o.st === 'near').length;
-    const ins = mine.filter(o => o.st === 'ins').length;
-    const score = expN ? Math.max(0, (good - 0.5 * ins) / expN) : null;
-    return { w: x.w, ops: mine, score };
+    const expN = mine.filter(o => o.exp).length, good = mine.filter(o => o.st === 'ok' || o.st === 'near').length, ins = mine.filter(o => o.st === 'ins').length;
+    return { w: x.w, ops: mine, score: expN ? Math.max(0, (good - 0.5 * ins) / expN) : null };
   });
 }
 function tipFor(o, isLast) {
@@ -229,7 +236,6 @@ function tipFor(o, isLast) {
   if (!g) return `Suono mancante: ${e}.`;
   return `Atteso ${e}, sentito ${g}.`;
 }
-// pauses and pace from the waveform (16 kHz mono)
 function fluency(audio, nWords) {
   const F = 320, n = Math.floor(audio.length / F), rms = new Float32Array(n);
   for (let f = 0; f < n; f++) { let s = 0; for (let i = f * F; i < (f + 1) * F; i++) s += audio[i] * audio[i]; rms[f] = Math.sqrt(s / F); }
@@ -241,7 +247,27 @@ function fluency(audio, nWords) {
   const dur = (last - first + 1) * FRAME_S;
   return { dur, pauses, pauseT, wpm: dur >= 1.5 && nWords >= 4 ? Math.round(nWords / (dur / 60)) : 0 };
 }
-window.__pure = { segs, align, scoreWords, fluency };
+// split long audio at the quietest point near every CHUNK_S seconds, so the sound model never sees a long clip
+function chunkBounds(audio, maxS = CHUNK_S) {
+  const max = maxS * SR, out = []; let start = 0;
+  while (audio.length - start > max * 1.25) {
+    const lo = start + max - SR, hi = Math.min(start + max + SR, audio.length - 320); let best = lo, bestE = Infinity;
+    for (let p = lo; p < hi; p += 320) { let e = 0; for (let i = p; i < p + 320; i++) e += audio[i] * audio[i]; if (e < bestE) { bestE = e; best = p + 160; } }
+    out.push([start, best]); start = best;
+  }
+  out.push([start, audio.length]); return out;
+}
+// "think: θ ɪ ŋ k" lines -> [{w, p}]
+function parsePhonemeLines(raw) {
+  const out = [];
+  for (const line of String(raw).split('\n')) {
+    const m = line.match(/^\s*[-*\d.)\s]*(.+?)\s*:\s*(.+?)\s*$/); if (!m) continue;
+    const p = m[2].replace(/[\/\[\]]/g, '').split(/\s+/).filter(Boolean);
+    if (p.length && m[1].length < 40) out.push({ w: m[1], p });
+  }
+  return out;
+}
+window.__pure = { segs, align, scoreWords, fluency, chunkBounds, parsePhonemeLines };
 
 /* ===================== models ===================== */
 function progressFor(key) {
@@ -261,12 +287,12 @@ async function loadAll() {
   try {
     if (!T) { T = await import(TJS); T.env.allowLocalModels = false; log('transformers.js', T.env.version); }
     if (!asr) {
-      $('s-asr').textContent = 'scarico…';
+      $('s-asr').textContent = 'carico…';
       asr = await T.pipeline('automatic-speech-recognition', ASR_ID, { dtype: 'q8', device: 'wasm', progress_callback: progressFor('asr') });
       ready('asr'); log('whisper pronto');
     }
     if (!ph) {
-      $('s-ph').textContent = 'scarico…';
+      $('s-ph').textContent = 'carico…';
       const r = await fetch(`https://huggingface.co/${PH_ID}/resolve/main/vocab.json`);
       if (!r.ok) throw new Error('vocab.json: HTTP ' + r.status);
       const v = await r.json(); vocab = []; for (const [tok, id] of Object.entries(v)) vocab[id] = tok; blankId = v['<pad>'] ?? 0;
@@ -278,12 +304,12 @@ async function loadAll() {
       if (!ph) throw lastErr || new Error('modello fonemi non caricato');
       ready('ph');
     }
-    $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.';
+    $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.'; store.set('sc.loaded', '1');
     refresh();
   } catch (e) { fail('Non sono riuscito a caricare i modelli. Controlla la connessione e riprova.', e); $('load').disabled = false; }
 }
 
-async function phones(audio) {
+async function phonesOne(audio) {
   let mean = 0; for (let i = 0; i < audio.length; i++) mean += audio[i]; mean /= audio.length;
   let v = 0; for (let i = 0; i < audio.length; i++) v += (audio[i] - mean) ** 2;
   const sd = Math.sqrt(v / audio.length) || 1, x = new Float32Array(audio.length);
@@ -291,7 +317,7 @@ async function phones(audio) {
   const feeds = { input_values: new T.Tensor('float32', x, [1, x.length]) };
   const names = ph.sessions?.model?.inputNames;
   if (names && names.includes('attention_mask')) feeds.attention_mask = new T.Tensor('int64', new BigInt64Array(x.length).fill(1n), [1, x.length]);
-  const { logits } = await ph(feeds); const [, frames, V] = logits.dims; const d = logits.data;
+  const out = await ph(feeds); const logits = out.logits; const [, frames, V] = logits.dims; const d = logits.data;
   const res = []; let prev = -1;
   for (let t = 0; t < frames; t++) {
     let best = 0, bv = -Infinity; const off = t * V;
@@ -299,53 +325,79 @@ async function phones(audio) {
     if (best !== prev && best !== blankId) { const tok = vocab[best]; if (tok && !/^<.*>$/.test(tok) && tok !== '|') res.push(tok); }
     prev = best;
   }
+  try { logits.dispose?.(); feeds.input_values.dispose?.(); feeds.attention_mask?.dispose?.(); } catch (e) {}
   return res;
+}
+async function phones(audio) {
+  const out = [];
+  for (const [a, b] of chunkBounds(audio)) { if (b - a < 1600) continue; out.push(...await phonesOne(audio.subarray(a, b))); }
+  return out;
 }
 
 /* ===================== Claude ===================== */
-function systemPrompt() {
-  const weak = Object.entries(st.weak).sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
-  return `You are an English speaking coach inside a practice app for an Italian native speaker (CEFR level ${$('level').value}).
-Role-play as ${st.scenario.role}. Keep the conversation going naturally in English at the learner's level.
-Each user message is an automatic transcript of what the learner said aloud. A separate audio model scores their sounds, so you never judge pronunciation yourself.
-${weak.length ? `The learner currently struggles with these sounds (IPA): ${weak.join(' ')}. Steer your questions so that natural answers need words containing them.\n` : ''}
-Reply with ONLY a JSON object, no markdown fences, in exactly this shape:
-{"reply": string, "improved": string, "praise": string, "notes": [{"type": "grammar"|"word", "you": string, "better": string, "why": string}], "words": [{"w": string, "p": [string]}]}
-
-- "reply": your next line in the role-play, in English, 1-3 short sentences, usually ending with a question. Never correct the learner here.
-- "improved": the learner's message as a fluent native speaker would say it; "" if it was already natural.
-- "praise": one short sentence in Italian about something specific they did well.
-- "notes": at most 3 real grammar or word-choice problems, most useful first; "you" = their exact words, "better" = the fix, "why" = one sentence in Italian. Ignore punctuation and capitalisation.
-- "words": EVERY word of the learner's message, in order, exactly as transcribed (do not correct them), each with "p" = its General American pronunciation in connected speech as a list of IPA phonemes, one symbol per item.
-  Use only these symbols: p b t d k ɡ f v θ ð s z ʃ ʒ h m n ŋ l ɹ w j tʃ dʒ iː ɪ ɛ æ ɑː ɔː ʊ uː ʌ ə ɜː eɪ aɪ ɔɪ aʊ oʊ.
-  Write r-coloured vowels as vowel + ɹ (ə ɹ, ɑː ɹ). Use weak forms for unstressed function words (to = t ə, and = ə n d, the = ð ə, a = ə, of = ə v, for = f ə ɹ, can = k ə n). No stress marks.`;
-}
-async function askClaude(text) {
-  const key = $('key').value.trim();
-  const messages = [...st.turns.slice(-12), { role: 'user', content: text }];
+async function callClaude({ system, messages, max_tokens }) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: $('model').value, max_tokens: 2000, system: systemPrompt(), messages })
+    headers: { 'content-type': 'application/json', 'x-api-key': $('key').value.trim(), 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: $('model').value, max_tokens, system, messages })
   });
   if (!r.ok) {
     let detail = ''; try { detail = (await r.json()).error?.message || ''; } catch (e) {}
     const e = new Error('HTTP ' + r.status + ' ' + detail); e.status = r.status; throw e;
   }
   const data = await r.json();
-  const raw = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+  if (data.stop_reason === 'max_tokens') log('claude: risposta troncata a', max_tokens, 'token');
+  return (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+}
+function replySystem() {
+  const weak = Object.entries(st.weak).sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
+  return `You are an English speaking coach inside a practice app for an Italian native speaker (CEFR level ${$('level').value}).
+Role-play as ${st.scenario.role}. Keep the conversation going naturally in English at the learner's level.
+Each user message is an automatic transcript of what the learner said aloud. A separate audio model scores their sounds, so you never comment on pronunciation.
+${weak.length ? `The learner currently struggles with these sounds (IPA): ${weak.join(' ')}. Steer your questions so that natural answers need words containing them.\n` : ''}
+Reply with ONLY a JSON object, no markdown fences, in exactly this shape:
+{"reply": string, "improved": string, "praise": string, "notes": [{"type": "grammar"|"word", "you": string, "better": string, "why": string}]}
+
+- "reply": your next line in the role-play, in English, 1-3 short sentences, usually ending with a question. Never correct the learner here.
+- "improved": the learner's message as a fluent native speaker would say it; "" if it was already natural.
+- "praise": one short sentence in Italian about something specific they did well.
+- "notes": at most 3 real grammar or word-choice problems, most useful first; "you" = their exact words, "better" = the fix, "why" = one sentence in Italian. Ignore punctuation and capitalisation.`;
+}
+async function askReply(text) {
+  const raw = await callClaude({ system: replySystem(), messages: [...st.turns.slice(-12), { role: 'user', content: text }], max_tokens: 1200 });
   const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
-  if (a < 0 || b <= a) throw new Error('risposta senza JSON: ' + raw.slice(0, 120));
-  const obj = JSON.parse(raw.slice(a, b + 1));
-  if (!obj.reply) throw new Error('risposta senza "reply"');
+  let obj = null; try { if (a >= 0 && b > a) obj = JSON.parse(raw.slice(a, b + 1)); } catch (e) {}
+  if (!obj || !obj.reply) {   // truncated or malformed JSON: still keep the conversation going
+    const m = raw.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (m) { try { obj = { reply: JSON.parse('"' + m[1] + '"') }; } catch (e) {} }
+    else if (raw.trim() && a < 0) obj = { reply: raw.trim() };
+    log('claude: JSON non valido, recupero', !!obj);
+  }
+  if (!obj || !obj.reply) throw new Error('risposta non leggibile: ' + raw.slice(0, 160));
   return obj;
+}
+const PH_SYSTEM = `You convert English text to phonemes for a pronunciation app.
+For EVERY word of the user's text, in order and exactly as written (do not correct anything), output one line: the word, a colon, then its General American pronunciation in connected speech as IPA phonemes separated by spaces. Output nothing else.
+Use only these symbols: p b t d k ɡ f v θ ð s z ʃ ʒ h m n ŋ l ɹ w j tʃ dʒ iː ɪ ɛ æ ɑː ɔː ʊ uː ʌ ə ɜː eɪ aɪ ɔɪ aʊ oʊ
+Write r-coloured vowels as vowel + ɹ. Use weak forms for unstressed function words (to: t ə, and: ə n d, the: ð ə, a: ə, of: ə v, for: f ə ɹ, can: k ə n). No stress marks.
+Example for "I think so":
+I: aɪ
+think: θ ɪ ŋ k
+so: s oʊ`;
+async function askPhonemes(text) {
+  const raw = await callClaude({ system: PH_SYSTEM, messages: [{ role: 'user', content: text }], max_tokens: 4000 });
+  const words = parsePhonemeLines(raw);
+  if (!words.length) throw new Error('fonemi attesi non leggibili: ' + raw.slice(0, 160));
+  return words;
 }
 function claudeErr(e) {
   if (e.status === 401) return 'La chiave API non è valida. Controllala in Impostazioni.';
   if (e.status === 429) return 'Troppe richieste a Claude. Aspetta qualche secondo e riprova.';
-  if (e.status === 400 || e.status === 404) return 'Claude ha rifiutato la richiesta (' + e.message.slice(0, 140) + '). Prova a cambiare modello in Impostazioni.';
-  if (e.status >= 500) return 'Il servizio di Claude non risponde in questo momento. Riprova.';
-  return 'Non sono riuscito a contattare Claude. Controlla la connessione e riprova.';
+  if (e.status === 400 || e.status === 404) return 'Claude ha rifiutato la richiesta: ' + e.message.slice(0, 160);
+  if (e.status >= 500) return 'Il servizio di Claude non risponde in questo momento.';
+  if (e.status) return 'Errore di Claude: ' + e.message.slice(0, 160);
+  if (/non leggibil/.test(e.message)) return 'La risposta di Claude è arrivata incompleta.';
+  return 'Non sono riuscito a contattare Claude. Controlla la connessione.';
 }
 
 /* ===================== voice out ===================== */
@@ -363,20 +415,24 @@ function speak(text) {
 let unlocked = false;
 function unlockSpeech() { if (unlocked || !('speechSynthesis' in window)) return; unlocked = true; try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) {} }
 
-/* ===================== rendering ===================== */
+/* ===================== state on screen ===================== */
+function save() {
+  store.set('sc.chat', JSON.stringify({ scenario: st.scenario.id, turns: st.turns.slice(-24), weak: st.weak, view: st.view.slice(-30) }));
+}
 const toEnd = () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
 function themBubble(text) {
   const b = el('div', 'bub them'); const who = el('div', 'who', 'Partner');
   const s = el('button', 'say', 'Ascolta'); s.type = 'button'; s.onclick = () => speak(text); who.append(s);
   b.append(who, el('div', '', text)); $('chat').append(b); return b;
 }
-function renderTurn(turn, text, r, scored, flu, timing) {
+function pushThem(text) { st.view.push({ type: 'them', text }); themBubble(text); }
+function renderTurn(turn, rec) {
   turn.replaceChildren();
   const b = el('div', 'bub me'); b.style.alignSelf = 'flex-end'; b.append(el('div', 'who', 'Tu'));
   const detail = el('div', 'detail'); detail.hidden = true;
-  if (scored && scored.length) {
+  if (rec.scored && rec.scored.length) {
     const ws = el('div', 'words');
-    scored.forEach(x => {
+    rec.scored.forEach(x => {
       const cls = x.score == null ? '' : x.score >= 0.85 ? ' g' : x.score >= 0.6 ? ' a' : ' r';
       const btn = el('button', 'w' + cls, x.w); btn.type = 'button'; btn.setAttribute('aria-pressed', 'false');
       btn.onclick = () => {
@@ -388,16 +444,20 @@ function renderTurn(turn, text, r, scored, flu, timing) {
       ws.append(btn);
     });
     b.append(ws);
-  } else b.append(el('div', '', text));
+  } else b.append(el('div', '', rec.text));
   turn.append(b, detail);
 
   const fb = el('div', 'fb');
-  if (scored && scored.length) {
-    const valid = scored.filter(x => x.score != null);
+  // sounds
+  if (rec.scored && rec.scored.length) {
+    const valid = rec.scored.filter(x => x.score != null);
     const avg = valid.length ? Math.round(100 * valid.reduce((s, x) => s + x.score, 0) / valid.length) : null;
     const bad = valid.filter(x => x.score < 0.6).length;
-    fb.append(el('div', '', avg == null ? 'Suoni non valutati.' : `Suoni: ${avg}% corretti${bad ? `, ${bad} ${bad === 1 ? 'parola' : 'parole'} da rivedere (in rosso)` : ''}. Tocca una parola per vedere i suoni.`));
-  }
+    fb.append(el('div', '', avg == null ? 'Suoni non valutati.' : `Suoni: ${avg}% corretti${bad ? `, ${bad} ${bad === 1 ? 'parola' : 'parole'} da rivedere (in rosso)` : ''}. Tocca una parola per i dettagli.`));
+  } else if (rec.soundErr) fb.append(el('div', 'err small', rec.soundErr));
+  else fb.append(el('div', 'thinking', 'Valuto i suoni…'));
+  // reply feedback
+  const r = rec.r;
   if (r) {
     if (r.praise) fb.append(el('div', '', String(r.praise)));
     if (r.improved) { const x = el('div', 'better'); x.append(el('b', '', 'Più naturale'), document.createTextNode(String(r.improved))); fb.append(x); }
@@ -405,13 +465,18 @@ function renderTurn(turn, text, r, scored, flu, timing) {
       const d = el('div', 'note'); d.append(el('span', 'pill', nn.type === 'word' ? 'Lessico' : 'Grammatica'), el('s', '', String(nn.you || '')), document.createTextNode(' → ' + String(nn.better || '')));
       d.append(el('div', 'muted small', String(nn.why || ''))); fb.append(d);
     });
-  }
-  const stats = el('div', 'stats');
+  } else if (rec.err) {
+    const box = el('div', 'err small', rec.err + ' ');
+    const again = el('button', '', 'Riprova'); again.type = 'button';
+    again.onclick = async () => { if (st.busy || st.recording) return; st.busy = true; refresh(); rec.err = null; renderTurn(turn, rec); await doReply(turn, rec); st.busy = false; save(); refresh(); };
+    const wrap = el('div', 'row'); wrap.append(box, again); fb.append(wrap);
+  } else fb.append(el('div', 'thinking', 'Il partner sta rispondendo…'));
+  const stats = el('div', 'stats'); const flu = rec.flu;
   if (flu) {
     if (flu.wpm) stats.append(el('span', '', `${flu.wpm} parole/min (naturale: 120-150)`));
     stats.append(el('span', '', flu.pauses ? `${flu.pauses} ${flu.pauses === 1 ? 'pausa lunga' : 'pause lunghe'}, ${flu.pauseT.toFixed(1)} s` : 'nessuna pausa lunga'));
   }
-  if (timing) stats.append(el('span', '', `analisi ${timing.toFixed(1)} s`));
+  if (rec.secs) stats.append(el('span', '', `analisi ${rec.secs.toFixed(1)} s`));
   fb.append(stats); turn.append(fb);
 }
 function showDetail(box, x) {
@@ -419,13 +484,9 @@ function showDetail(box, x) {
   const head = el('div', 'row'); head.append(el('strong', '', x.w));
   const s = el('button', 'say', 'Ascolta'); s.type = 'button'; s.onclick = () => speak(x.w); head.append(s); box.append(head);
   const line = el('div', 'ipa');
-  x.ops.forEach(o => {
-    const sp = el('span', o.st === 'near' ? 'ok' : o.st, o.st === 'ins' ? '+' + o.got : o.exp);
-    if (o.st === 'sub') sp.textContent = o.exp + '→' + o.got;
-    line.append(sp);
-  });
+  x.ops.forEach(o => { const sp = el('span', o.st === 'near' ? 'ok' : o.st, o.st === 'ins' ? '+' + o.got : o.st === 'sub' ? o.exp + '→' + o.got : o.exp); line.append(sp); });
   box.append(line);
-  const lastExp = x.ops.map(o => o.exp).lastIndexOf(x.ops.filter(o => o.exp).slice(-1)[0]?.exp);
+  let lastExp = -1; x.ops.forEach((o, i) => { if (o.exp) lastExp = i; });
   const tips = []; x.ops.forEach((o, i) => { if (o.st === 'sub' || o.st === 'del' || o.st === 'ins') { const t = tipFor(o, i >= lastExp); if (!tips.includes(t)) tips.push(t); } });
   if (!tips.length) box.append(el('div', 'muted small', 'Tutti i suoni riconosciuti.'));
   tips.slice(0, 4).forEach(t => box.append(el('div', 'small', t)));
@@ -434,9 +495,25 @@ function renderWeak() {
   const top = Object.entries(st.weak).sort((a, b) => b[1] - a[1]).slice(0, 6);
   $('weak-panel').hidden = !top.length; $('weak').replaceChildren(...top.map(([p, n]) => el('span', 'chip', `${p} ×${n}`)));
 }
-function resetTalk() {
-  st.turns = []; st.weak = {}; $('chat').replaceChildren(); renderWeak();
-  themBubble(st.scenario.open);
+function renderAll() {
+  $('chat').replaceChildren();
+  for (const it of st.view) {
+    if (it.type === 'them') themBubble(it.text);
+    else { const turn = el('div', 'turn'); $('chat').append(turn); renderTurn(turn, it); }
+  }
+  renderWeak();
+}
+function resetTalk() { st.turns = []; st.weak = {}; st.view = []; $('chat').replaceChildren(); pushThem(st.scenario.open); renderWeak(); save(); }
+function restore() {
+  try {
+    const s = JSON.parse(store.get('sc.chat') || 'null'); if (!s || !Array.isArray(s.view) || !s.view.length) return false;
+    st.scenario = SCENARIOS.find(x => x.id === s.scenario) || SCENARIOS[0]; st.turns = s.turns || []; st.weak = s.weak || {}; st.view = s.view;
+    for (const it of st.view) if (it.type === 'me') {   // anything left pending was cut off by a reload
+      if (!it.r && !it.err) it.err = 'La pagina si è ricaricata prima della risposta.';
+      if (!it.scored && !it.soundErr) it.soundErr = 'La pagina si è ricaricata durante l\'analisi dei suoni.';
+    }
+    $('scenario').value = st.scenario.id; renderAll(); return true;
+  } catch (e) { return false; }
 }
 function refresh() {
   const modelsOk = !!(asr && ph), keyOk = $('key').value.trim().length > 10;
@@ -445,13 +522,13 @@ function refresh() {
   const t = $('rec-title'), n = $('rec-note');
   if (st.recording) { t.textContent = 'Ti ascolto'; n.textContent = 'Premi di nuovo quando hai finito.'; }
   else if (st.busy) { t.textContent = 'Analizzo la tua voce…'; n.textContent = 'Qualche secondo.'; }
-  else if (!modelsOk) { t.textContent = 'Carica prima i modelli'; n.textContent = 'Apri Impostazioni qui sopra.'; }
+  else if (!modelsOk) { t.textContent = store.get('sc.loaded') ? 'Carico i modelli…' : 'Carica prima i modelli'; n.textContent = 'Vedi Impostazioni qui sopra.'; }
   else if (!keyOk) { t.textContent = 'Manca la chiave API'; n.textContent = 'Inseriscila in Impostazioni per avere il dialogo.'; }
-  else { t.textContent = 'Premi e rispondi in inglese'; n.textContent = 'Parla liberamente, poi premi di nuovo.'; }
+  else { t.textContent = 'Premi e rispondi in inglese'; n.textContent = `Parla liberamente, fino a ${MAX_REC_S} secondi.`; }
 }
 
 /* ===================== recording + turn ===================== */
-let rec = null, chunks = [], stream = null;
+let rec = null, chunks = [], stream = null, tick = null, recStart = 0;
 async function toggleRec() {
   if (st.busy) return;
   if (rec && rec.state === 'recording') { rec.stop(); return; }
@@ -460,54 +537,69 @@ async function toggleRec() {
   catch (e) { fail('Il microfono non è accessibile. Consenti il microfono per questa pagina nelle impostazioni del browser.', e); return; }
   chunks = []; rec = new MediaRecorder(stream);
   rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-  rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); st.recording = false; handleAudio(new Blob(chunks, { type: rec.mimeType })); };
-  rec.start(); st.recording = true; $('setup').open = false; refresh();
+  rec.onstop = () => { clearInterval(tick); stream.getTracks().forEach(t => t.stop()); st.recording = false; handleAudio(new Blob(chunks, { type: rec.mimeType })); };
+  rec.start(); st.recording = true; recStart = Date.now(); $('setup').open = false; refresh();
+  tick = setInterval(() => {
+    const s = Math.round((Date.now() - recStart) / 1000);
+    $('rec-note').textContent = `${s} s di ${MAX_REC_S}. Premi di nuovo quando hai finito.`;
+    if (s >= MAX_REC_S && rec.state === 'recording') rec.stop();
+  }, 500);
 }
 async function decode16k(blob) {
-  const ctx = new AudioContext({ sampleRate: 16000 });
+  const ctx = new AudioContext({ sampleRate: SR });
   try { const buf = await ctx.decodeAudioData(await blob.arrayBuffer()); return buf.getChannelData(0).slice(); } finally { ctx.close(); }
 }
+async function doReply(turn, r) {
+  try {
+    const out = await askReply(r.text);
+    r.r = out; st.turns.push({ role: 'user', content: r.text }, { role: 'assistant', content: JSON.stringify({ reply: out.reply }) });
+    renderTurn(turn, r); pushThem(String(out.reply)); speak(String(out.reply)); toEnd();
+  } catch (e) { r.err = claudeErr(e); log('risposta ERRORE', String(e.message || e).slice(0, 300)); renderTurn(turn, r); }
+  save();
+}
+async function doSounds(turn, r, audio) {
+  try {
+    const [exp, got] = await Promise.all([askPhonemes(r.text), phones(audio)]);
+    log('fonemi sentiti:', got.join(' ')); log('fonemi attesi:', exp.map(x => x.p.join('')).join(' '));
+    r.scored = scoreWords(exp, got);
+    r.scored.forEach(x => x.ops.forEach(o => { if ((o.st === 'sub' || o.st === 'del') && o.exp) st.weak[o.exp] = (st.weak[o.exp] || 0) + 1; }));
+    renderWeak();
+  } catch (e) {
+    r.soundErr = e.status || /fonemi attesi/.test(e.message) ? 'Suoni non valutati: ' + claudeErr(e) : 'Suoni non valutati: il modello audio non è riuscito ad analizzare la registrazione.';
+    log('suoni ERRORE', String(e.message || e).slice(0, 300));
+  }
+  renderTurn(turn, r); save();
+}
 async function handleAudio(blob) {
-  st.busy = true; refresh();
+  st.busy = true; store.set('sc.busy', String(Date.now())); refresh();
   const turn = el('div', 'turn'); turn.append(el('div', 'thinking', 'Ascolto la registrazione…')); $('chat').append(turn); toEnd();
   const t0 = performance.now();
+  const stop = msg => { turn.replaceChildren(el('div', 'err small', msg)); };
   try {
-    const audio = await decode16k(blob); const secs = audio.length / 16000;
-    if (secs < 0.6) throw Object.assign(new Error('short'), { user: 'Registrazione troppo corta. Riprova.' });
-    const a = await asr(audio, secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {});
-    const text = (a.text || '').replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim();
+    let audio;
+    try { audio = await decode16k(blob); } catch (e) { log('decodifica ERRORE', String(e.message || e)); stop('Non sono riuscito a leggere la registrazione. Riprova.'); return; }
+    const secs = audio.length / SR; log('audio', secs.toFixed(1), 's');
+    if (secs < 0.6) { stop('Registrazione troppo corta. Tieni premuto il tempo di una frase.'); return; }
+    let text = '';
+    try {
+      const a = await asr(audio, secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {});
+      text = (a.text || '').replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim();
+    } catch (e) { log('whisper ERRORE', String(e.message || e).slice(0, 300)); stop('Il modello che riconosce le parole non è riuscito ad analizzare l\'audio. Riprova con una frase più breve.'); return; }
     log('whisper:', text);
-    if (!text) throw Object.assign(new Error('empty'), { user: 'Non ho sentito parole. Avvicina il telefono e riprova.' });
-    turn.replaceChildren(el('div', 'bub me', text), el('div', 'thinking', 'Valuto i suoni e preparo la risposta…')); turn.firstChild.style.alignSelf = 'flex-end'; toEnd();
+    if (!text) { stop('Non ho sentito parole. Avvicina il telefono alla bocca e riprova.'); return; }
 
-    const [cl, pr] = await Promise.allSettled([askClaude(text), phones(audio)]);
-    if (pr.status === 'fulfilled') log('fonemi:', pr.value.join(' ')); else log('fonemi ERRORE', String(pr.reason));
-    const flu = fluency(audio, text.split(/\s+/).length);
-    const timing = (performance.now() - t0) / 1000;
-
-    if (cl.status !== 'fulfilled') {
-      renderTurn(turn, text, null, null, flu, timing);
-      fail(claudeErr(cl.reason), cl.reason); return;
-    }
-    const r = cl.value; let scored = null;
-    const words = Array.isArray(r.words) ? r.words.filter(x => x && x.w && Array.isArray(x.p)) : [];
-    if (words.length && pr.status === 'fulfilled') {
-      scored = scoreWords(words, pr.value);
-      scored.forEach(x => x.ops.forEach(o => { if ((o.st === 'sub' || o.st === 'del') && o.exp) st.weak[o.exp] = (st.weak[o.exp] || 0) + 1; }));
-      log('attesi:', words.map(x => x.p.join('')).join(' '));
-    }
-    st.turns.push({ role: 'user', content: text }, { role: 'assistant', content: JSON.stringify({ reply: r.reply }) });
-    renderTurn(turn, text, r, scored, flu, timing); renderWeak();
-    themBubble(String(r.reply)); speak(String(r.reply)); toEnd();
-  } catch (e) {
-    turn.remove(); fail(e.user || 'L\'analisi non è riuscita. Riprova.', e);
-  } finally { st.busy = false; refresh(); }
+    const r = { type: 'me', text, r: null, scored: null, flu: fluency(audio, text.split(/\s+/).length), err: null, soundErr: null, secs: 0 };
+    st.view.push(r); renderTurn(turn, r); save(); toEnd();
+    await Promise.allSettled([doReply(turn, r), doSounds(turn, r, audio)]);
+    r.secs = (performance.now() - t0) / 1000; renderTurn(turn, r); save();
+  } finally { st.busy = false; store.del('sc.busy'); refresh(); }
 }
 
 /* ===================== boot ===================== */
 for (const s of SCENARIOS) { const o = el('option', '', s.name); o.value = s.id; $('scenario').append(o); }
-$('key').value = store.get('sc.key'); $('model').value = store.get('sc.model') || 'claude-haiku-5-5'; if (!$('model').value) $('model').selectedIndex = 0;
-$('level').value = store.get('sc.level') || 'B1';
+$('key').value = store.get('sc.key');
+$('model').value = store.get('sc.model') || 'claude-haiku-5-5'; if ($('model').selectedIndex < 0) $('model').selectedIndex = 0;
+$('level').value = store.get('sc.level') || 'B1'; if ($('level').selectedIndex < 0) $('level').value = 'B1';
 $('key').oninput = () => { store.set('sc.key', $('key').value.trim()); refresh(); };
 $('model').onchange = () => store.set('sc.model', $('model').value);
 $('level').onchange = () => store.set('sc.level', $('level').value);
@@ -516,8 +608,12 @@ $('restart').onclick = () => { if (!st.busy && !st.recording) resetTalk(); };
 $('load').onclick = loadAll;
 $('rec').onclick = toggleRec;
 window.addEventListener('error', e => log('errore pagina:', e.message));
-window.addEventListener('unhandledrejection', e => log('promise:', String(e.reason && (e.reason.message || e.reason))));
-resetTalk(); refresh();
+window.addEventListener('unhandledrejection', e => log('promise:', String(e.reason && (e.reason.message || e.reason)).slice(0, 300)));
+if (!restore()) resetTalk();
+if (crashed) fail('La pagina si è ricaricata durante un\'analisi, probabilmente per poca memoria libera. La conversazione è stata recuperata. Chiudi le altre schede e prova con frasi più brevi.');
+$('log').value = logLines.join('\n');
+refresh();
+if (store.get('sc.loaded')) { $('setup').open = !$('key').value; loadAll(); }
 </script>
 </body>
 </html>
