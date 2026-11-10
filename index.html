@@ -171,7 +171,7 @@ const SCENARIOS = [
 const st = { scenario: SCENARIOS[0], turns: [], weak: {}, view: [], busy: false, recording: false };
 let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
-const BUILD = '2026-11-10.8';
+const BUILD = '2026-11-10.9';
 // one address, always the latest version: drop any ?v=… and, if the server has a newer page than the one Safari kept, fetch it and reload once
 if (location.search) history.replaceState(null, '', location.pathname + location.hash);
 async function checkUpdate() {
@@ -237,7 +237,7 @@ function scoreWords(words, produced) {
   return words.map((x, wi) => {
     const mine = ops.filter(o => o.w === wi);
     const expN = mine.filter(o => o.exp).length, good = mine.filter(o => o.st === 'ok' || o.st === 'near').length, ins = mine.filter(o => o.st === 'ins').length;
-    return { w: x.w, ops: mine, score: expN ? Math.max(0, (good - 0.5 * ins) / expN) : null };
+    return { w: x.w, p: x.p, ops: mine, score: expN ? Math.max(0, (good - 0.5 * ins) / expN) : null };
   });
 }
 function tipFor(o, isLast) {
@@ -533,18 +533,19 @@ function renderTurn(turn, rec) {
   const detail = el('div', 'detail'); detail.hidden = true;
   if (rec.scored && rec.scored.length) {
     const ws = el('div', 'words');
-    rec.scored.forEach(x => {
+    rec.scored.forEach((x, xi) => {
       const cls = x.score == null ? '' : x.score >= 0.85 ? ' g' : x.score >= 0.6 ? ' a' : ' r';
       const btn = el('button', 'w' + cls, x.w); btn.type = 'button'; btn.setAttribute('aria-pressed', 'false');
       btn.onclick = () => {
         const open = btn.getAttribute('aria-pressed') === 'true';
         ws.querySelectorAll('.w').forEach(o => o.setAttribute('aria-pressed', 'false'));
         if (open) { detail.hidden = true; return; }
-        btn.setAttribute('aria-pressed', 'true'); showDetail(detail, x);
+        btn.setAttribute('aria-pressed', 'true'); showDetail(detail, x, turn, rec, xi);
       };
       ws.append(btn);
     });
     b.append(ws);
+    if (rec._open != null && ws.children[rec._open]) { ws.children[rec._open].setAttribute('aria-pressed', 'true'); showDetail(detail, rec.scored[rec._open], turn, rec, rec._open); }
   } else b.append(el('div', '', rec.text));
   turn.append(b, detail);
 
@@ -580,7 +581,7 @@ function renderTurn(turn, rec) {
   if (rec.secs) stats.append(el('span', '', `analisi ${rec.secs.toFixed(1)} s`));
   fb.append(stats); turn.append(fb);
 }
-function showDetail(box, x) {
+function showDetail(box, x, turn, rec, xi) {
   box.replaceChildren(); box.hidden = false;
   const head = el('div', 'row'); head.append(el('strong', '', x.w));
   const s = el('button', 'say', 'Ascolta'); s.type = 'button'; s.onclick = () => speak(x.w); head.append(s); box.append(head);
@@ -596,6 +597,46 @@ function showDetail(box, x) {
   } else x.ops.forEach((o, i) => { if (o.st === 'sub' || o.st === 'del' || o.st === 'ins') { const t = tipFor(o, i >= lastExp); if (!tips.includes(t)) tips.push(t); } });
   if (!tips.length) box.append(el('div', 'muted small', 'Tutti i suoni riconosciuti.'));
   tips.slice(0, 4).forEach(t => box.append(el('div', 'small', t)));
+  if (turn) {   // say just this word again and see whether its score improves
+    const row = el('div', 'row'); const btn = el('button', 'pri', 'Ripeti questa parola'); btn.type = 'button'; btn.disabled = !ph;
+    const note = el('span', 'muted small', ph ? '' : 'Carica prima i modelli.');
+    btn.onclick = () => retryWord(btn, note, x, turn, rec, xi);
+    row.append(btn, note); box.append(row);
+    if (x.last) box.append(el('div', 'small', x.last));
+  }
+}
+const pct = v => v == null ? 'n/d' : Math.round(v * 100) + '%';
+let clip = null;
+async function retryWord(btn, note, x, turn, rec, xi) {
+  if (clip) { clip.stop(); return; }
+  if (st.busy || st.recording || !ph) return;
+  try { speechSynthesis.cancel(); } catch (e) {}
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { note.textContent = 'Microfono non accessibile.'; return; }
+  const parts = []; const mr = new MediaRecorder(stream); clip = mr; st.busy = true; refresh();
+  btn.textContent = 'Ferma'; note.textContent = `Di' "${x.w.replace(/[.,!?;:]+$/, '')}" e premi Ferma.`;
+  const timer = setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, 4000);
+  mr.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
+  mr.onstop = async () => {
+    clearTimeout(timer); stream.getTracks().forEach(t => t.stop()); clip = null; btn.disabled = true; btn.textContent = 'Analizzo…';
+    try {
+      const audio = await decode16k(new Blob(parts, { type: mr.mimeType }));
+      const got = await phones(audio);
+      const letters = x.kind === 'letters';
+      const exp = (x.p && x.p.length) ? x.p : letters ? lettersOf(x.w)[0].p : x.ops.filter(o => o.exp).map(o => o.exp);
+      const res = scoreWords([{ w: x.w, p: exp }], got)[0]; const before = x.score;
+      const heard = res.ops.filter(o => o.got).map(o => o.got).join(letters ? '' : ' ');
+      x.tries = (x.tries || 0) + 1;
+      const better = res.score != null && (before == null || res.score > before);
+      x.last = `Tentativo ${x.tries}: ${pct(res.score)}, prima ${pct(before)}. ${better ? 'Meglio.' : res.score === before ? 'Uguale.' : 'Non ancora.'} Ho sentito: ${heard || 'niente'}.`;
+      if (better) { x.score = res.score; x.ops = res.ops; }
+      log('ripetizione', x.w, '→', heard, pct(res.score));
+    } catch (e) { x.last = 'Non sono riuscito ad analizzare la ripetizione. Riprova.'; log('ripetizione ERRORE', String(e.message || e).slice(0, 200)); }
+    st.busy = false; refresh();
+    rec._open = xi; renderTurn(turn, rec); delete rec._open; save();
+  };
+  mr.start();
 }
 function renderWeak() {
   const top = Object.entries(st.weak).sort((a, b) => b[1] - a[1]).slice(0, 6);
