@@ -167,6 +167,8 @@ let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
 log('--- apertura ---', navigator.userAgent.slice(0, 120));
 const crashed = store.get('sc.busy');
+const loadCrash = store.get('sc.loading');
+if (loadCrash) { log('ATTENZIONE: la pagina si è chiusa mentre caricava i modelli'); store.del('sc.loading'); }
 if (crashed) { log('ATTENZIONE: la pagina si è ricaricata durante un\'analisi iniziata', Math.round((Date.now() - Number(crashed)) / 1000), 's fa'); store.del('sc.busy'); }
 
 /* ===================== phoneme maths (pure) ===================== */
@@ -308,24 +310,26 @@ const ready = key => { $('p-' + key).value = 100; $('s-' + key).textContent = 'p
 
 async function loadAll() {
   clearErr(); $('load').disabled = true;
+  store.set('sc.loading', String(Date.now())); log('carico i modelli…');
   try {
     if (!T) { T = await import(TJS); T.env.allowLocalModels = false; log('transformers.js', T.env.version); }
     try { if (navigator.storage && navigator.storage.persist) log('archiviazione persistente:', await navigator.storage.persist()); } catch (e) {}
     const files = await storageReport();
     const from = id => inCache(files, id) ? 'leggo dal telefono…' : 'scarico…';
     if (!asr) {
-      $('s-asr').textContent = from(ASR_ID);
+      $('s-asr').textContent = from(ASR_ID); log('inizio whisper,', from(ASR_ID));
       asr = await T.pipeline('automatic-speech-recognition', ASR_ID, { dtype: 'q8', device: 'wasm', progress_callback: progressFor('asr') });
       ready('asr'); log('whisper pronto');
     }
     if (!ph) {
-      $('s-ph').textContent = from(PH_ID);
+      $('s-ph').textContent = from(PH_ID); log('inizio fonemi,', from(PH_ID));
       const r = await fetch(`https://huggingface.co/${PH_ID}/resolve/main/vocab.json`);
       if (!r.ok) throw new Error('vocab.json: HTTP ' + r.status);
       const v = await r.json(); vocab = []; for (const [tok, id] of Object.entries(v)) vocab[id] = tok; blankId = v['<pad>'] ?? 0;
       let lastErr = null;
       const known = store.get('sc.dtype');
       for (const dtype of (known ? [known] : PH_DTYPES)) {
+        log('provo fonemi dtype', dtype);
         try { ph = await T.AutoModelForCTC.from_pretrained(PH_ID, { dtype, device: 'wasm', progress_callback: progressFor('ph') }); log('fonemi pronto, dtype', dtype); store.set('sc.dtype', dtype); break; }
         catch (e) {
           lastErr = e; log('dtype', dtype, 'no:', String(e.message || e).slice(0, 300));
@@ -335,13 +339,13 @@ async function loadAll() {
       if (!ph) throw lastErr || new Error('modello fonemi non caricato');
       ready('ph');
     }
-    $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.'; store.set('sc.loaded', '1');
+    $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.'; store.set('sc.loaded', '1'); store.del('sc.loading');
     const after = await storageReport();
     if (!inCache(after, PH_ID)) { log('ATTENZIONE: il modello dei fonemi non è rimasto in cache'); $('store-note').textContent = 'Questo browser non è riuscito a salvare il modello dei suoni: verrà riscaricato a ogni apertura.'; }
     refresh();
   } catch (e) {
     fail('Non sono riuscito a caricare i modelli. Se succede di nuovo, premi "Cancella i modelli salvati" in Impostazioni e ricarica la pagina.', e);
-    $('load').disabled = false; $('setup').open = true; storageReport();
+    $('load').disabled = false; $('setup').open = true; store.del('sc.loading'); storageReport();
   }
 }
 
@@ -655,7 +659,10 @@ if (!restore()) resetTalk();
 if (crashed) fail('La pagina si è ricaricata durante un\'analisi, probabilmente per poca memoria libera. La conversazione è stata recuperata. Chiudi le altre schede e prova con frasi più brevi.');
 $('log').value = logLines.join('\n');
 refresh();
-if (store.get('sc.loaded')) { $('setup').open = !$('key').value; loadAll(); }
+if (loadCrash) {   // do not retry on our own: that is what makes Safari give up on the page
+  $('setup').open = true;
+  fail('La pagina si è chiusa mentre caricava i modelli: su questo telefono occupano troppa memoria. Non li ricarico da solo. Apri "Diagnostica" in fondo, copia il testo e mandalo a Claude.');
+} else if (store.get('sc.loaded')) { $('setup').open = !$('key').value; loadAll(); }
 </script>
 </body>
 </html>
