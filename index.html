@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Speaking Coach · passo 1</title>
+<style>
+:root{--bg:#EDF1F6;--surface:#fff;--sunk:#E2E8F0;--ink:#14213D;--muted:#55627A;--line:#CBD4E1;--accent:#C9245F;--good:#16794C;--warn:#9A5B00;--warn-soft:#FBEED3}
+@media (prefers-color-scheme:dark){:root{--bg:#0E1524;--surface:#172136;--sunk:#202C45;--ink:#E8EDF6;--muted:#9BA8BF;--line:#2E3B57;--accent:#FF6F9C;--good:#5FD39B;--warn:#F2B552;--warn-soft:#3A2B10;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:24px 16px 48px;display:flex;flex-direction:column;gap:16px}
+h1{margin:0;font-size:1.7rem;letter-spacing:-.02em}
+p{margin:0}
+.muted{color:var(--muted)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.label{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+button{font:inherit;font-weight:600;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 16px;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+button.rec{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+progress{width:100%;height:10px}
+.model{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center}
+.model progress{grid-column:1/-1}
+.state{font-size:.85rem;font-variant-numeric:tabular-nums;color:var(--muted)}
+.state.ok{color:var(--good);font-weight:600}
+.out{font-size:1.25rem;overflow-wrap:anywhere;min-height:1.5em}
+.ipa{font-family:"IBM Plex Mono","Noto Sans Mono",ui-monospace,Menlo,monospace;font-size:1.05rem;line-height:1.9;overflow-wrap:anywhere}
+.ipa span{background:var(--sunk);border-radius:5px;padding:2px 5px;margin-right:3px;white-space:nowrap}
+.ipa .gap{background:none;color:var(--muted);padding:0 4px}
+.err{background:var(--warn-soft);color:var(--warn);border-radius:10px;padding:10px 14px;font-weight:500;white-space:pre-wrap;overflow-wrap:anywhere}
+.stats{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:.9rem;color:var(--muted);font-variant-numeric:tabular-nums}
+audio{width:100%}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Speaking Coach</h1>
+    <p class="muted">Passo 1: prova dei due modelli audio. Parla in inglese e controlla che compaiano le parole e i suoni.</p>
+  </div>
+
+  <div class="err" id="err" hidden></div>
+
+  <section class="panel">
+    <span class="label">Modelli (scaricati una volta, poi restano nel browser)</span>
+    <div class="model"><span>Parole · Whisper base (inglese)</span><span class="state" id="s-asr">non caricato</span><progress id="p-asr" max="100" value="0"></progress></div>
+    <div class="model"><span>Suoni · wav2vec2 per fonemi</span><span class="state" id="s-ph">non caricato</span><progress id="p-ph" max="100" value="0"></progress></div>
+    <div class="row"><button class="pri" id="load">Carica i modelli</button><span class="muted" id="load-note">Il secondo modello è pesante: il primo download può richiedere qualche minuto.</span></div>
+  </section>
+
+  <section class="panel">
+    <span class="label">Registrazione</span>
+    <div class="row">
+      <button class="rec" id="rec" disabled>Registra</button>
+      <span class="muted" id="rec-note">Carica prima i modelli.</span>
+    </div>
+    <audio id="play" controls hidden></audio>
+  </section>
+
+  <section class="panel">
+    <span class="label">Parole capite</span>
+    <p class="out" id="words"><span class="muted">Qui compare la frase che hai detto.</span></p>
+    <span class="label">Suoni prodotti (IPA)</span>
+    <p class="ipa" id="phones"><span class="gap">Qui compaiono i suoni che hai pronunciato, uno per uno.</span></p>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel">
+    <span class="label">Diagnostica</span>
+    <p class="muted">Se qualcosa non va, copia questo testo e incollalo a Claude.</p>
+    <textarea id="log" readonly rows="7" style="width:100%;font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px"></textarea>
+  </section>
+</main>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const log = (...a) => { const t = $('log'); t.value += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; t.scrollTop = t.scrollHeight; };
+const fail = (msg, e) => { $('err').hidden = false; $('err').textContent = msg + (e ? '\n' + (e.message || e) : ''); log('ERRORE', msg, e ? String(e.stack || e.message || e) : ''); };
+const clearErr = () => { $('err').hidden = true; };
+
+const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2';
+const ASR_ID = 'Xenova/whisper-base.en';
+const PH_ID = 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX';
+const PH_DTYPES = ['q8', 'q4', 'fp16', 'fp32'];   // first one the repo offers wins
+const FRAME_S = 0.02;                              // wav2vec2 emits one frame every 20 ms
+
+log('browser:', navigator.userAgent);
+log('origine:', location.protocol + '//' + location.host, '| cache disponibile:', 'caches' in window);
+if (location.protocol === 'file:') log('NOTA: aperto come file. Funziona, ma i modelli potrebbero essere riscaricati a ogni apertura. Meglio http://localhost.');
+
+let T = null, asr = null, ph = null, vocab = null, blankId = 0;
+
+function progressFor(key) {
+  const files = {};
+  return ev => {
+    if (ev.status === 'progress' && ev.total) {
+      files[ev.file] = [ev.loaded, ev.total];
+      let l = 0, t = 0; for (const [a, b] of Object.values(files)) { l += a; t += b; }
+      $('p-' + key).value = 100 * l / t;
+      $('s-' + key).textContent = (l / 1048576).toFixed(0) + ' / ' + (t / 1048576).toFixed(0) + ' MB';
+    }
+  };
+}
+const ready = key => { $('p-' + key).value = 100; $('s-' + key).textContent = 'pronto'; $('s-' + key).className = 'state ok'; };
+
+async function loadAll() {
+  clearErr(); $('load').disabled = true;
+  try {
+    if (!T) { log('carico transformers.js', TJS); T = await import(TJS); T.env.allowLocalModels = false; log('transformers.js versione', T.env.version); }
+
+    if (!asr) {
+      $('s-asr').textContent = 'scarico…';
+      asr = await T.pipeline('automatic-speech-recognition', ASR_ID, { dtype: 'q8', device: 'wasm', progress_callback: progressFor('asr') });
+      ready('asr'); log('whisper pronto');
+    }
+
+    if (!ph) {
+      $('s-ph').textContent = 'scarico…';
+      const r = await fetch(`https://huggingface.co/${PH_ID}/resolve/main/vocab.json`);
+      if (!r.ok) throw new Error('vocab.json: HTTP ' + r.status);
+      const v = await r.json();
+      vocab = []; for (const [tok, id] of Object.entries(v)) vocab[id] = tok;
+      blankId = v['<pad>'] ?? 0;
+      log('vocabolario fonemi:', vocab.length, 'simboli, blank =', blankId);
+
+      let lastErr = null;
+      for (const dtype of PH_DTYPES) {
+        try {
+          log('provo modello fonemi con dtype', dtype);
+          ph = await T.AutoModelForCTC.from_pretrained(PH_ID, { dtype, device: 'wasm', progress_callback: progressFor('ph') });
+          log('modello fonemi pronto, dtype', dtype, '| input:', ph.sessions?.model?.inputNames ?? '?');
+          break;
+        } catch (e) { lastErr = e; log('dtype', dtype, 'non riuscito:', String(e.message || e).slice(0, 200)); }
+      }
+      if (!ph) throw lastErr || new Error('modello fonemi non caricato');
+      ready('ph');
+    }
+
+    $('rec').disabled = false; $('rec-note').textContent = 'Premi, parla in inglese per qualche secondo, poi premi di nuovo.';
+    $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.';
+  } catch (e) {
+    fail('Non sono riuscito a caricare i modelli. Controlla la connessione e riprova.', e);
+    $('load').disabled = false;
+  }
+}
+
+/* ---------- recording ---------- */
+let rec = null, chunks = [], stream = null, busy = false;
+async function toggleRec() {
+  if (busy) return;
+  if (rec && rec.state === 'recording') { rec.stop(); return; }
+  clearErr();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  } catch (e) { fail('Il microfono non è accessibile. Consenti il microfono per questa pagina nelle impostazioni del browser.', e); return; }
+  chunks = [];
+  rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    $('rec').textContent = 'Registra';
+    const blob = new Blob(chunks, { type: rec.mimeType });
+    $('play').src = URL.createObjectURL(blob); $('play').hidden = false;
+    await analyse(blob);
+  };
+  rec.start();
+  $('rec').textContent = 'Ferma'; $('rec-note').textContent = 'Sto registrando…';
+}
+
+async function decode16k(blob) {
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  try { const buf = await ctx.decodeAudioData(await blob.arrayBuffer()); return buf.getChannelData(0).slice(); }
+  finally { ctx.close(); }
+}
+
+/* ---------- phoneme model: raw audio -> phones with timings ---------- */
+async function phones(audio) {
+  // wav2vec2 feature extraction = zero mean, unit variance
+  let mean = 0; for (let i = 0; i < audio.length; i++) mean += audio[i]; mean /= audio.length;
+  let v = 0; for (let i = 0; i < audio.length; i++) v += (audio[i] - mean) ** 2;
+  const sd = Math.sqrt(v / audio.length) || 1;
+  const x = new Float32Array(audio.length); for (let i = 0; i < audio.length; i++) x[i] = (audio[i] - mean) / sd;
+
+  const feeds = { input_values: new T.Tensor('float32', x, [1, x.length]) };
+  const names = ph.sessions?.model?.inputNames;
+  if (names && names.includes('attention_mask')) feeds.attention_mask = new T.Tensor('int64', new BigInt64Array(x.length).fill(1n), [1, x.length]);
+  const out = await ph(feeds);
+  const logits = out.logits; const [, frames, V] = logits.dims; const d = logits.data;
+
+  // greedy CTC: argmax per frame, merge repeats, drop blanks; keep timing and confidence
+  const res = []; let prev = -1;
+  for (let t = 0; t < frames; t++) {
+    let best = 0, bv = -Infinity, off = t * V;
+    for (let k = 0; k < V; k++) { const val = d[off + k]; if (val > bv) { bv = val; best = k; } }
+    if (best !== prev && best !== blankId) {
+      const tok = vocab[best];
+      if (tok && !/^<.*>$/.test(tok)) {
+        let sum = 0; for (let k = 0; k < V; k++) sum += Math.exp(d[off + k] - bv);   // softmax prob of the winner
+        res.push({ p: tok, t: t * FRAME_S, conf: 1 / sum });
+      }
+    }
+    prev = best;
+  }
+  return res;
+}
+
+async function analyse(blob) {
+  busy = true; $('rec').disabled = true; $('rec-note').textContent = 'Analizzo l\'audio…';
+  try {
+    const audio = await decode16k(blob);
+    const secs = audio.length / 16000;
+    log('audio:', secs.toFixed(2), 's,', rec.mimeType);
+    if (secs < 0.5) throw new Error('Registrazione troppo corta.');
+
+    let t0 = performance.now();
+    const a = await asr(audio, secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {});
+    const tAsr = performance.now() - t0;
+    const text = (a.text || '').trim();
+    $('words').textContent = text || '(nessuna parola riconosciuta)';
+    log('whisper', Math.round(tAsr), 'ms:', text);
+
+    t0 = performance.now();
+    const p = await phones(audio);
+    const tPh = performance.now() - t0;
+    const box = $('phones'); box.replaceChildren();
+    p.forEach((x, i) => {
+      if (i && x.t - p[i - 1].t > 0.35) { const g = document.createElement('span'); g.className = 'gap'; g.textContent = '·'; g.title = 'pausa'; box.append(g); }
+      const s = document.createElement('span'); s.textContent = x.p; s.title = x.t.toFixed(2) + ' s · sicurezza ' + Math.round(x.conf * 100) + '%';
+      if (x.conf < 0.5) s.style.opacity = '.55';
+      box.append(s);
+    });
+    if (!p.length) box.textContent = '(nessun suono riconosciuto)';
+    log('fonemi', Math.round(tPh), 'ms:', p.map(x => x.p).join(' '));
+
+    const nWords = text ? text.split(/\s+/).length : 0;
+    $('stats').textContent = '';
+    for (const s of [`Durata ${secs.toFixed(1)} s`, `${nWords} parole`, `${p.length} suoni`, `Whisper ${(tAsr / 1000).toFixed(1)} s`, `Fonemi ${(tPh / 1000).toFixed(1)} s`]) {
+      const e = document.createElement('span'); e.textContent = s; $('stats').append(e);
+    }
+    $('rec-note').textContent = 'Fatto. Puoi registrare di nuovo.';
+  } catch (e) {
+    fail('L\'analisi non è riuscita.', e); $('rec-note').textContent = 'Riprova.';
+  } finally { busy = false; $('rec').disabled = false; }
+}
+
+$('load').onclick = loadAll;
+$('rec').onclick = toggleRec;
+window.addEventListener('error', e => log('errore pagina:', e.message));
+window.addEventListener('unhandledrejection', e => log('promise:', String(e.reason && (e.reason.message || e.reason))));
+</script>
+</body>
+</html>
