@@ -2,105 +2,255 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Speaking Coach · passo 1</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Speaking Coach</title>
 <style>
-:root{--bg:#EDF1F6;--surface:#fff;--sunk:#E2E8F0;--ink:#14213D;--muted:#55627A;--line:#CBD4E1;--accent:#C9245F;--good:#16794C;--warn:#9A5B00;--warn-soft:#FBEED3}
-@media (prefers-color-scheme:dark){:root{--bg:#0E1524;--surface:#172136;--sunk:#202C45;--ink:#E8EDF6;--muted:#9BA8BF;--line:#2E3B57;--accent:#FF6F9C;--good:#5FD39B;--warn:#F2B552;--warn-soft:#3A2B10;color-scheme:dark}}
+:root{--bg:#EDF1F6;--surface:#fff;--sunk:#E2E8F0;--ink:#14213D;--muted:#55627A;--line:#CBD4E1;--accent:#C9245F;--accent-soft:#FBE3EC;
+  --good:#16794C;--good-soft:#DDF3E8;--warn:#9A5B00;--warn-soft:#FBEED3;--bad:#B3261E;--bad-soft:#FBE1DF}
+@media (prefers-color-scheme:dark){:root{--bg:#0E1524;--surface:#172136;--sunk:#202C45;--ink:#E8EDF6;--muted:#9BA8BF;--line:#2E3B57;--accent:#FF6F9C;--accent-soft:#40182A;
+  --good:#5FD39B;--good-soft:#143525;--warn:#F2B552;--warn-soft:#3A2B10;--bad:#FF8A80;--bad-soft:#44191A;color-scheme:dark}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:760px;margin:0 auto;padding:24px 16px 48px;display:flex;flex-direction:column;gap:16px}
-h1{margin:0;font-size:1.7rem;letter-spacing:-.02em}
+main{max-width:720px;margin:0 auto;padding:18px max(16px,env(safe-area-inset-right)) calc(150px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:14px}
+h1{margin:0;font-size:1.5rem;letter-spacing:-.02em}
+h1 span{color:var(--accent)}
 p{margin:0}
 .muted{color:var(--muted)}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px}
-.label{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-button{font:inherit;font-weight:600;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 16px;cursor:pointer}
+.small{font-size:.86rem}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.label{font-size:.7rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,input{font:inherit;color:inherit}
+button{font-weight:600;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:8px 14px;cursor:pointer}
 button:disabled{opacity:.5;cursor:not-allowed}
-button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-button.rec{background:var(--ink);border-color:var(--ink);color:var(--bg)}
-progress{width:100%;height:10px}
-.model{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center}
+button.pri{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+select,input[type=password],input[type=text]{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:8px 10px;min-width:0;max-width:100%}
+.field{display:flex;flex-direction:column;gap:3px;flex:1;min-width:130px}
+progress{width:100%;height:8px}
+.model{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;font-size:.92rem}
 .model progress{grid-column:1/-1}
-.state{font-size:.85rem;font-variant-numeric:tabular-nums;color:var(--muted)}
+.state{font-size:.82rem;font-variant-numeric:tabular-nums;color:var(--muted)}
 .state.ok{color:var(--good);font-weight:600}
-.out{font-size:1.25rem;overflow-wrap:anywhere;min-height:1.5em}
-.ipa{font-family:"IBM Plex Mono","Noto Sans Mono",ui-monospace,Menlo,monospace;font-size:1.05rem;line-height:1.9;overflow-wrap:anywhere}
-.ipa span{background:var(--sunk);border-radius:5px;padding:2px 5px;margin-right:3px;white-space:nowrap}
-.ipa .gap{background:none;color:var(--muted);padding:0 4px}
 .err{background:var(--warn-soft);color:var(--warn);border-radius:10px;padding:10px 14px;font-weight:500;white-space:pre-wrap;overflow-wrap:anywhere}
-.stats{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:.9rem;color:var(--muted);font-variant-numeric:tabular-nums}
-audio{width:100%}
+details>summary{cursor:pointer;font-weight:600}
 [hidden]{display:none!important}
+
+/* dialogue */
+.chat{display:flex;flex-direction:column;gap:12px}
+.bub{max-width:92%;padding:10px 14px;border-radius:16px;overflow-wrap:anywhere}
+.bub.them{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:4px}
+.bub.me{align-self:flex-end;background:var(--accent-soft);border-bottom-right-radius:4px}
+.who{display:flex;gap:10px;align-items:center;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.say{background:none;border:0;padding:0;color:var(--accent);font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.turn{align-self:stretch;display:flex;flex-direction:column;gap:8px}
+.words{display:flex;flex-wrap:wrap;gap:5px;font-size:1.12rem}
+.w{border:0;border-radius:7px;padding:2px 7px;font-weight:600;background:var(--sunk)}
+.w.g{background:var(--good-soft);color:var(--good)}
+.w.a{background:var(--warn-soft);color:var(--warn)}
+.w.r{background:var(--bad-soft);color:var(--bad)}
+.w[aria-pressed=true]{outline:2px solid currentColor}
+.detail{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.ipa{font-family:"IBM Plex Mono","Noto Sans Mono",ui-monospace,Menlo,monospace;line-height:1.9;overflow-wrap:anywhere}
+.ipa span{border-radius:5px;padding:2px 5px;margin-right:3px;background:var(--sunk);white-space:nowrap}
+.ipa .ok{background:var(--good-soft);color:var(--good)}
+.ipa .sub,.ipa .del{background:var(--bad-soft);color:var(--bad)}
+.ipa .del{text-decoration:line-through}
+.ipa .ins{background:var(--warn-soft);color:var(--warn)}
+.fb{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:.95rem}
+.better{background:var(--good-soft);border-radius:9px;padding:8px 10px}
+.better b{display:block;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--good)}
+.note s{color:var(--muted)}
+.pill{display:inline-block;font-size:.66rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;border-radius:99px;padding:1px 8px;margin-right:6px;background:var(--sunk);color:var(--muted)}
+.stats{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:.86rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.thinking{color:var(--muted);font-size:.92rem}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--bad-soft);color:var(--bad);border-radius:99px;padding:3px 11px;font-family:ui-monospace,Menlo,monospace;font-size:.9rem}
+
+/* record bar */
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.bar-in{max-width:720px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.mic{flex:none;width:68px;height:68px;border-radius:50%;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;position:relative;padding:0}
+.mic:disabled{background:var(--sunk);color:var(--muted)}
+.mic svg{width:28px;height:28px}
+.mic.on::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:3px solid var(--accent);animation:pulse 1.2s ease-out infinite}
+@keyframes pulse{from{opacity:.9;transform:scale(.92)}to{opacity:0;transform:scale(1.2)}}
+@media (prefers-reduced-motion:reduce){.mic.on::after{animation:none;opacity:.6}}
+.bar strong{display:block}
 </style>
 </head>
 <body>
 <main>
   <div>
-    <h1>Speaking Coach</h1>
-    <p class="muted">Passo 1: prova dei due modelli audio. Parla in inglese e controlla che compaiano le parole e i suoni.</p>
+    <h1>Speaking <span>Coach</span></h1>
+    <p class="muted small">Rispondi a voce in inglese. I modelli audio ascoltano i suoni che produci; Claude porta avanti il dialogo.</p>
   </div>
 
   <div class="err" id="err" hidden></div>
 
-  <section class="panel">
-    <span class="label">Modelli (scaricati una volta, poi restano nel browser)</span>
-    <div class="model"><span>Parole · Whisper base (inglese)</span><span class="state" id="s-asr">non caricato</span><progress id="p-asr" max="100" value="0"></progress></div>
-    <div class="model"><span>Suoni · wav2vec2 per fonemi</span><span class="state" id="s-ph">non caricato</span><progress id="p-ph" max="100" value="0"></progress></div>
-    <div class="row"><button class="pri" id="load">Carica i modelli</button><span class="muted" id="load-note">Il secondo modello è pesante: il primo download può richiedere qualche minuto.</span></div>
-  </section>
-
-  <section class="panel">
-    <span class="label">Registrazione</span>
+  <details class="panel" id="setup" open>
+    <summary>Impostazioni</summary>
+    <div class="model"><span>Parole · Whisper</span><span class="state" id="s-asr">non caricato</span><progress id="p-asr" max="100" value="0"></progress></div>
+    <div class="model"><span>Suoni · wav2vec2 fonemi</span><span class="state" id="s-ph">non caricato</span><progress id="p-ph" max="100" value="0"></progress></div>
+    <div class="row"><button class="pri" id="load">Carica i modelli</button><span class="muted small" id="load-note">Serve una volta per ogni apertura. Meglio in Wi-Fi.</span></div>
+    <label class="field"><span class="label">Chiave API di Claude</span>
+      <input type="password" id="key" autocomplete="off" placeholder="sk-ant-…"></label>
+    <p class="muted small">La chiave resta salvata solo in questo browser e viene inviata soltanto ad Anthropic. Si crea nella console per sviluppatori di Anthropic ed è a consumo.</p>
     <div class="row">
-      <button class="rec" id="rec" disabled>Registra</button>
-      <span class="muted" id="rec-note">Carica prima i modelli.</span>
+      <label class="field"><span class="label">Situazione</span><select id="scenario"></select></label>
+      <label class="field"><span class="label">Livello</span><select id="level"><option>A2</option><option selected>B1</option><option>B2</option><option>C1</option></select></label>
+      <label class="field"><span class="label">Modello Claude</span><select id="model"><option value="claude-haiku-5-5">Haiku (veloce)</option><option value="claude-sonnet-5-5">Sonnet (più preciso)</option></select></label>
     </div>
-    <audio id="play" controls hidden></audio>
+    <div class="row"><button id="restart">Nuova conversazione</button></div>
+  </details>
+
+  <section class="chat" id="chat" aria-live="polite"></section>
+
+  <section class="panel" id="weak-panel" hidden>
+    <span class="label">Suoni da allenare in questa sessione</span>
+    <div class="chips" id="weak"></div>
+    <p class="muted small">Il partner cercherà di farti usare parole con questi suoni.</p>
   </section>
 
-  <section class="panel">
-    <span class="label">Parole capite</span>
-    <p class="out" id="words"><span class="muted">Qui compare la frase che hai detto.</span></p>
-    <span class="label">Suoni prodotti (IPA)</span>
-    <p class="ipa" id="phones"><span class="gap">Qui compaiono i suoni che hai pronunciato, uno per uno.</span></p>
-    <div class="stats" id="stats"></div>
-  </section>
-
-  <section class="panel">
-    <span class="label">Diagnostica</span>
-    <p class="muted">Se qualcosa non va, copia questo testo e incollalo a Claude.</p>
-    <textarea id="log" readonly rows="7" style="width:100%;font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px"></textarea>
-  </section>
+  <details class="panel">
+    <summary>Diagnostica</summary>
+    <p class="muted small">Se qualcosa non va, copia questo testo e incollalo a Claude.</p>
+    <textarea id="log" readonly rows="8" style="width:100%;font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px"></textarea>
+  </details>
 </main>
 
+<div class="bar"><div class="bar-in">
+  <button class="mic" id="rec" disabled aria-label="Registra">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+  </button>
+  <div><strong id="rec-title">Carica prima i modelli</strong><span class="muted small" id="rec-note">Apri Impostazioni qui sopra.</span></div>
+</div></div>
+
 <script type="module">
+/* ===================== helpers ===================== */
 const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const log = (...a) => { const t = $('log'); t.value += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; t.scrollTop = t.scrollHeight; };
-const fail = (msg, e) => { $('err').hidden = false; $('err').textContent = msg + (e ? '\n' + (e.message || e) : ''); log('ERRORE', msg, e ? String(e.stack || e.message || e) : ''); };
+const fail = (msg, e) => { $('err').hidden = false; $('err').textContent = msg; log('ERRORE', msg, e ? String(e.stack || e.message || e) : ''); };
 const clearErr = () => { $('err').hidden = true; };
+const store = { get: k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 
 const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2';
 const ASR_ID = 'Xenova/whisper-base.en';
 const PH_ID = 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX';
-const PH_DTYPES = ['q8', 'q4', 'fp16', 'fp32'];   // first one the repo offers wins
-const FRAME_S = 0.02;                              // wav2vec2 emits one frame every 20 ms
+const PH_DTYPES = ['q8', 'q4', 'fp16', 'fp32'];
+const FRAME_S = 0.02;
 
-log('browser:', navigator.userAgent);
-log('origine:', location.protocol + '//' + location.host, '| cache disponibile:', 'caches' in window);
-if (location.protocol === 'file:') log('NOTA: aperto come file. Funziona, ma i modelli potrebbero essere riscaricati a ogni apertura. Meglio http://localhost.');
+const SCENARIOS = [
+  { id:'coffee', name:'Al bar', role:'a friendly barista in a London coffee shop', open:"Hi there! Welcome in. What can I get for you today?" },
+  { id:'colleague', name:'Nuovo collega', role:'a new colleague meeting the learner on their first day at an international company', open:"Hey, you must be new here! I'm Sam from the design team. What do you do?" },
+  { id:'interview', name:'Colloquio di lavoro', role:'a polite hiring manager running a job interview', open:"Thanks for coming in today. To start, could you tell me a little about yourself?" },
+  { id:'hotel', name:'Hotel', role:'a hotel receptionist; after check-in, mention a small problem with the room so the learner must negotiate', open:"Good evening, welcome to the Riverside Hotel. Do you have a reservation with us?" },
+  { id:'weekend', name:'Chiacchiere sul weekend', role:'a chatty friend catching up over lunch', open:"So, how was your weekend? Did you get up to anything fun?" },
+  { id:'free', name:'Tema libero', role:'a curious, warm conversation partner who follows whatever topic the learner brings up', open:"Hi! What would you like to talk about today?" }
+];
 
+const st = { scenario: SCENARIOS[0], turns: [], weak: {}, busy: false, recording: false };
 let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
+log('browser:', navigator.userAgent);
+log('origine:', location.protocol + '//' + location.host, '| cache:', 'caches' in window, '| memoria:', navigator.deviceMemory ?? '?');
+
+/* ===================== phoneme maths (pure) ===================== */
+const UNITS = ['tʃ', 'dʒ', 'eɪ', 'aɪ', 'ɔɪ', 'aʊ', 'oʊ'];
+const VOWELS = new Set(['i', 'ɪ', 'ɛ', 'æ', 'ɑ', 'ɒ', 'ɔ', 'ʊ', 'u', 'ʌ', 'ə', 'ɜ', 'a', 'o', 'eɪ', 'aɪ', 'ɔɪ', 'aʊ', 'oʊ']);
+const NEAR = new Set(['ə|ʌ', 'ə|ɪ', 'ə|ɜ', 'ɑ|ɒ', 'ɔ|ɒ', 'ɑ|ɔ', 'ɑ|a', 'ʌ|a', 'ɾ|t', 'ɾ|d', 'ɹ|r', 'ɹ|ɾ', 'o|oʊ', 'o|ɔ', 'i|j', 'u|w', 'ʊ|ə'].flatMap(p => { const [a, b] = p.split('|'); return [a + '|' + b, b + '|' + a]; }));
+
+// one model/IPA symbol (e.g. "ɑːɹ", "ɚ", "əl", "tʃ") -> canonical atomic segments
+function segs(tok) {
+  let s = String(tok).normalize('NFC').replace(/[ːˑˈˌ.̯̩̃͜͡\s]/g, '')
+    .replace(/g/g, 'ɡ').replace(/ɚ/g, 'əɹ').replace(/ɝ/g, 'ɜɹ').replace(/ɐ/g, 'ə').replace(/ᵻ/g, 'ɪ')
+    .replace(/əʊ/g, 'oʊ').replace(/e(?!ɪ)/g, 'ɛ').replace(/ʧ/g, 'tʃ').replace(/ʤ/g, 'dʒ').replace(/ɫ/g, 'l');
+  const out = []; const ch = Array.from(s);
+  for (let i = 0; i < ch.length; i++) {
+    const two = ch[i] + (ch[i + 1] || '');
+    if (UNITS.includes(two)) { out.push(two); i++; } else out.push(ch[i]);
+  }
+  return out;
+}
+function subCost(a, b) {
+  if (a === b) return 0;
+  if (NEAR.has(a + '|' + b)) return 0.3;
+  return VOWELS.has(a) === VOWELS.has(b) ? 1 : 1.4;
+}
+// exp: [{s, w}] expected segments with word index; got: [segment]. Returns per-expected ops plus insertions.
+function align(exp, got) {
+  const n = exp.length, m = got.length;
+  const delCost = i => (exp[i].s === 'ɹ' && i > 0 && VOWELS.has(exp[i - 1].s) && exp[i - 1].w === exp[i].w) ? 0.3 : 1;
+  const D = Array.from({ length: n + 1 }, () => new Float32Array(m + 1));
+  for (let i = 1; i <= n; i++) D[i][0] = D[i - 1][0] + delCost(i - 1);
+  for (let j = 1; j <= m; j++) D[0][j] = j;
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++)
+    D[i][j] = Math.min(D[i - 1][j - 1] + subCost(exp[i - 1].s, got[j - 1]), D[i - 1][j] + delCost(i - 1), D[i][j - 1] + 1);
+  const ops = []; let i = n, j = m; const eq = (a, b) => Math.abs(a - b) < 1e-4;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && eq(D[i][j], D[i - 1][j - 1] + subCost(exp[i - 1].s, got[j - 1]))) {
+      const c = subCost(exp[i - 1].s, got[j - 1]);
+      ops.push({ w: exp[i - 1].w, exp: exp[i - 1].s, got: got[j - 1], st: c === 0 ? 'ok' : c < 1 ? 'near' : 'sub' }); i--; j--;
+    } else if (i > 0 && eq(D[i][j], D[i - 1][j] + delCost(i - 1))) {
+      ops.push({ w: exp[i - 1].w, exp: exp[i - 1].s, got: null, st: delCost(i - 1) < 1 ? 'near' : 'del' }); i--;
+    } else { ops.push({ w: i > 0 ? exp[i - 1].w : (exp[0] ? exp[0].w : 0), exp: null, got: got[j - 1], st: 'ins' }); j--; }
+  }
+  return ops.reverse();
+}
+function scoreWords(words, produced) {   // words: [{w, p:[symbols]}], produced: [symbols]
+  const exp = []; words.forEach((x, wi) => (x.p || []).forEach(sym => segs(sym).forEach(s => exp.push({ s, w: wi }))));
+  const got = produced.flatMap(segs);
+  const ops = align(exp, got);
+  return words.map((x, wi) => {
+    const mine = ops.filter(o => o.w === wi);
+    const expN = mine.filter(o => o.exp).length;
+    const good = mine.filter(o => o.st === 'ok' || o.st === 'near').length;
+    const ins = mine.filter(o => o.st === 'ins').length;
+    const score = expN ? Math.max(0, (good - 0.5 * ins) / expN) : null;
+    return { w: x.w, ops: mine, score };
+  });
+}
+function tipFor(o, isLast) {
+  const e = o.exp, g = o.got;
+  if (o.st === 'ins') return VOWELS.has(g) && isLast ? `Hai aggiunto una vocale (${g}) in fondo alla parola: chiudi sulla consonante.` : `Suono in più: ${g}.`;
+  if (e === 'θ') return `TH di "think": punta della lingua tra i denti e soffia.${g ? ` Ho sentito ${g}.` : ''}`;
+  if (e === 'ð') return `TH di "this": lingua tra i denti, con la voce.${g ? ` Ho sentito ${g}.` : ''}`;
+  if (e === 'h') return 'La H va soffiata, come quando appanni un vetro.';
+  if (e === 'ɪ' && g === 'i') return 'Vocale breve e rilassata, come in "ship": non la i italiana.';
+  if (e === 'i' && g === 'ɪ') return 'Vocale lunga e tesa, come in "sheep".';
+  if (e === 'æ') return 'Vocale di "cat": bocca più aperta, a metà tra a ed e.';
+  if (e === 'ʌ') return 'Vocale di "cup": breve e centrale.';
+  if (e === 'ŋ') return 'NG di "sing": il suono resta nel naso, senza pronunciare la g.';
+  if (e === 'w') return 'W: labbra arrotondate, senza toccare i denti.';
+  if (e === 'ʊ' && g === 'u') return 'Vocale breve di "book", più rilassata della u italiana.';
+  if (e === 'ə') return 'Vocale debole (schwa): veloce e neutra, non la vocale scritta.';
+  if (e === 'ɜ') return 'Vocale di "bird" e "work": né o né e.';
+  if (e === 'ɹ' && !g) return 'Manca la R.';
+  if (!g) return `Suono mancante: ${e}.`;
+  return `Atteso ${e}, sentito ${g}.`;
+}
+// pauses and pace from the waveform (16 kHz mono)
+function fluency(audio, nWords) {
+  const F = 320, n = Math.floor(audio.length / F), rms = new Float32Array(n);
+  for (let f = 0; f < n; f++) { let s = 0; for (let i = f * F; i < (f + 1) * F; i++) s += audio[i] * audio[i]; rms[f] = Math.sqrt(s / F); }
+  const sorted = Array.from(rms).sort((a, b) => a - b), thr = Math.max(0.006, 0.12 * (sorted[Math.floor(n * 0.95)] || 0));
+  let first = -1, last = -1; for (let f = 0; f < n; f++) if (rms[f] > thr) { if (first < 0) first = f; last = f; }
+  if (first < 0) return null;
+  let pauses = 0, pauseT = 0, run = 0;
+  for (let f = first; f <= last; f++) { if (rms[f] <= thr) run++; else { if (run >= 25) { pauses++; pauseT += run * FRAME_S; } run = 0; } }
+  const dur = (last - first + 1) * FRAME_S;
+  return { dur, pauses, pauseT, wpm: dur >= 1.5 && nWords >= 4 ? Math.round(nWords / (dur / 60)) : 0 };
+}
+window.__pure = { segs, align, scoreWords, fluency };
+
+/* ===================== models ===================== */
 function progressFor(key) {
   const files = {};
   return ev => {
     if (ev.status === 'progress' && ev.total) {
       files[ev.file] = [ev.loaded, ev.total];
       let l = 0, t = 0; for (const [a, b] of Object.values(files)) { l += a; t += b; }
-      $('p-' + key).value = 100 * l / t;
-      $('s-' + key).textContent = (l / 1048576).toFixed(0) + ' / ' + (t / 1048576).toFixed(0) + ' MB';
+      $('p-' + key).value = 100 * l / t; $('s-' + key).textContent = (l / 1048576).toFixed(0) + ' / ' + (t / 1048576).toFixed(0) + ' MB';
     }
   };
 }
@@ -109,147 +259,265 @@ const ready = key => { $('p-' + key).value = 100; $('s-' + key).textContent = 'p
 async function loadAll() {
   clearErr(); $('load').disabled = true;
   try {
-    if (!T) { log('carico transformers.js', TJS); T = await import(TJS); T.env.allowLocalModels = false; log('transformers.js versione', T.env.version); }
-
+    if (!T) { T = await import(TJS); T.env.allowLocalModels = false; log('transformers.js', T.env.version); }
     if (!asr) {
       $('s-asr').textContent = 'scarico…';
       asr = await T.pipeline('automatic-speech-recognition', ASR_ID, { dtype: 'q8', device: 'wasm', progress_callback: progressFor('asr') });
       ready('asr'); log('whisper pronto');
     }
-
     if (!ph) {
       $('s-ph').textContent = 'scarico…';
       const r = await fetch(`https://huggingface.co/${PH_ID}/resolve/main/vocab.json`);
       if (!r.ok) throw new Error('vocab.json: HTTP ' + r.status);
-      const v = await r.json();
-      vocab = []; for (const [tok, id] of Object.entries(v)) vocab[id] = tok;
-      blankId = v['<pad>'] ?? 0;
-      log('vocabolario fonemi:', vocab.length, 'simboli, blank =', blankId);
-
+      const v = await r.json(); vocab = []; for (const [tok, id] of Object.entries(v)) vocab[id] = tok; blankId = v['<pad>'] ?? 0;
       let lastErr = null;
       for (const dtype of PH_DTYPES) {
-        try {
-          log('provo modello fonemi con dtype', dtype);
-          ph = await T.AutoModelForCTC.from_pretrained(PH_ID, { dtype, device: 'wasm', progress_callback: progressFor('ph') });
-          log('modello fonemi pronto, dtype', dtype, '| input:', ph.sessions?.model?.inputNames ?? '?');
-          break;
-        } catch (e) { lastErr = e; log('dtype', dtype, 'non riuscito:', String(e.message || e).slice(0, 200)); }
+        try { ph = await T.AutoModelForCTC.from_pretrained(PH_ID, { dtype, device: 'wasm', progress_callback: progressFor('ph') }); log('fonemi pronto, dtype', dtype); break; }
+        catch (e) { lastErr = e; log('dtype', dtype, 'no:', String(e.message || e).slice(0, 160)); }
       }
       if (!ph) throw lastErr || new Error('modello fonemi non caricato');
       ready('ph');
     }
-
-    $('rec').disabled = false; $('rec-note').textContent = 'Premi, parla in inglese per qualche secondo, poi premi di nuovo.';
     $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.';
-  } catch (e) {
-    fail('Non sono riuscito a caricare i modelli. Controlla la connessione e riprova.', e);
-    $('load').disabled = false;
-  }
+    refresh();
+  } catch (e) { fail('Non sono riuscito a caricare i modelli. Controlla la connessione e riprova.', e); $('load').disabled = false; }
 }
 
-/* ---------- recording ---------- */
-let rec = null, chunks = [], stream = null, busy = false;
-async function toggleRec() {
-  if (busy) return;
-  if (rec && rec.state === 'recording') { rec.stop(); return; }
-  clearErr();
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-  } catch (e) { fail('Il microfono non è accessibile. Consenti il microfono per questa pagina nelle impostazioni del browser.', e); return; }
-  chunks = [];
-  rec = new MediaRecorder(stream);
-  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-  rec.onstop = async () => {
-    stream.getTracks().forEach(t => t.stop());
-    $('rec').textContent = 'Registra';
-    const blob = new Blob(chunks, { type: rec.mimeType });
-    $('play').src = URL.createObjectURL(blob); $('play').hidden = false;
-    await analyse(blob);
-  };
-  rec.start();
-  $('rec').textContent = 'Ferma'; $('rec-note').textContent = 'Sto registrando…';
-}
-
-async function decode16k(blob) {
-  const ctx = new AudioContext({ sampleRate: 16000 });
-  try { const buf = await ctx.decodeAudioData(await blob.arrayBuffer()); return buf.getChannelData(0).slice(); }
-  finally { ctx.close(); }
-}
-
-/* ---------- phoneme model: raw audio -> phones with timings ---------- */
 async function phones(audio) {
-  // wav2vec2 feature extraction = zero mean, unit variance
   let mean = 0; for (let i = 0; i < audio.length; i++) mean += audio[i]; mean /= audio.length;
   let v = 0; for (let i = 0; i < audio.length; i++) v += (audio[i] - mean) ** 2;
-  const sd = Math.sqrt(v / audio.length) || 1;
-  const x = new Float32Array(audio.length); for (let i = 0; i < audio.length; i++) x[i] = (audio[i] - mean) / sd;
-
+  const sd = Math.sqrt(v / audio.length) || 1, x = new Float32Array(audio.length);
+  for (let i = 0; i < audio.length; i++) x[i] = (audio[i] - mean) / sd;
   const feeds = { input_values: new T.Tensor('float32', x, [1, x.length]) };
   const names = ph.sessions?.model?.inputNames;
   if (names && names.includes('attention_mask')) feeds.attention_mask = new T.Tensor('int64', new BigInt64Array(x.length).fill(1n), [1, x.length]);
-  const out = await ph(feeds);
-  const logits = out.logits; const [, frames, V] = logits.dims; const d = logits.data;
-
-  // greedy CTC: argmax per frame, merge repeats, drop blanks; keep timing and confidence
+  const { logits } = await ph(feeds); const [, frames, V] = logits.dims; const d = logits.data;
   const res = []; let prev = -1;
   for (let t = 0; t < frames; t++) {
-    let best = 0, bv = -Infinity, off = t * V;
+    let best = 0, bv = -Infinity; const off = t * V;
     for (let k = 0; k < V; k++) { const val = d[off + k]; if (val > bv) { bv = val; best = k; } }
-    if (best !== prev && best !== blankId) {
-      const tok = vocab[best];
-      if (tok && !/^<.*>$/.test(tok)) {
-        let sum = 0; for (let k = 0; k < V; k++) sum += Math.exp(d[off + k] - bv);   // softmax prob of the winner
-        res.push({ p: tok, t: t * FRAME_S, conf: 1 / sum });
-      }
-    }
+    if (best !== prev && best !== blankId) { const tok = vocab[best]; if (tok && !/^<.*>$/.test(tok) && tok !== '|') res.push(tok); }
     prev = best;
   }
   return res;
 }
 
-async function analyse(blob) {
-  busy = true; $('rec').disabled = true; $('rec-note').textContent = 'Analizzo l\'audio…';
-  try {
-    const audio = await decode16k(blob);
-    const secs = audio.length / 16000;
-    log('audio:', secs.toFixed(2), 's,', rec.mimeType);
-    if (secs < 0.5) throw new Error('Registrazione troppo corta.');
+/* ===================== Claude ===================== */
+function systemPrompt() {
+  const weak = Object.entries(st.weak).sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
+  return `You are an English speaking coach inside a practice app for an Italian native speaker (CEFR level ${$('level').value}).
+Role-play as ${st.scenario.role}. Keep the conversation going naturally in English at the learner's level.
+Each user message is an automatic transcript of what the learner said aloud. A separate audio model scores their sounds, so you never judge pronunciation yourself.
+${weak.length ? `The learner currently struggles with these sounds (IPA): ${weak.join(' ')}. Steer your questions so that natural answers need words containing them.\n` : ''}
+Reply with ONLY a JSON object, no markdown fences, in exactly this shape:
+{"reply": string, "improved": string, "praise": string, "notes": [{"type": "grammar"|"word", "you": string, "better": string, "why": string}], "words": [{"w": string, "p": [string]}]}
 
-    let t0 = performance.now();
-    const a = await asr(audio, secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {});
-    const tAsr = performance.now() - t0;
-    const text = (a.text || '').trim();
-    $('words').textContent = text || '(nessuna parola riconosciuta)';
-    log('whisper', Math.round(tAsr), 'ms:', text);
-
-    t0 = performance.now();
-    const p = await phones(audio);
-    const tPh = performance.now() - t0;
-    const box = $('phones'); box.replaceChildren();
-    p.forEach((x, i) => {
-      if (i && x.t - p[i - 1].t > 0.35) { const g = document.createElement('span'); g.className = 'gap'; g.textContent = '·'; g.title = 'pausa'; box.append(g); }
-      const s = document.createElement('span'); s.textContent = x.p; s.title = x.t.toFixed(2) + ' s · sicurezza ' + Math.round(x.conf * 100) + '%';
-      if (x.conf < 0.5) s.style.opacity = '.55';
-      box.append(s);
-    });
-    if (!p.length) box.textContent = '(nessun suono riconosciuto)';
-    log('fonemi', Math.round(tPh), 'ms:', p.map(x => x.p).join(' '));
-
-    const nWords = text ? text.split(/\s+/).length : 0;
-    $('stats').textContent = '';
-    for (const s of [`Durata ${secs.toFixed(1)} s`, `${nWords} parole`, `${p.length} suoni`, `Whisper ${(tAsr / 1000).toFixed(1)} s`, `Fonemi ${(tPh / 1000).toFixed(1)} s`]) {
-      const e = document.createElement('span'); e.textContent = s; $('stats').append(e);
-    }
-    $('rec-note').textContent = 'Fatto. Puoi registrare di nuovo.';
-  } catch (e) {
-    fail('L\'analisi non è riuscita.', e); $('rec-note').textContent = 'Riprova.';
-  } finally { busy = false; $('rec').disabled = false; }
+- "reply": your next line in the role-play, in English, 1-3 short sentences, usually ending with a question. Never correct the learner here.
+- "improved": the learner's message as a fluent native speaker would say it; "" if it was already natural.
+- "praise": one short sentence in Italian about something specific they did well.
+- "notes": at most 3 real grammar or word-choice problems, most useful first; "you" = their exact words, "better" = the fix, "why" = one sentence in Italian. Ignore punctuation and capitalisation.
+- "words": EVERY word of the learner's message, in order, exactly as transcribed (do not correct them), each with "p" = its General American pronunciation in connected speech as a list of IPA phonemes, one symbol per item.
+  Use only these symbols: p b t d k ɡ f v θ ð s z ʃ ʒ h m n ŋ l ɹ w j tʃ dʒ iː ɪ ɛ æ ɑː ɔː ʊ uː ʌ ə ɜː eɪ aɪ ɔɪ aʊ oʊ.
+  Write r-coloured vowels as vowel + ɹ (ə ɹ, ɑː ɹ). Use weak forms for unstressed function words (to = t ə, and = ə n d, the = ð ə, a = ə, of = ə v, for = f ə ɹ, can = k ə n). No stress marks.`;
+}
+async function askClaude(text) {
+  const key = $('key').value.trim();
+  const messages = [...st.turns.slice(-12), { role: 'user', content: text }];
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: $('model').value, max_tokens: 2000, system: systemPrompt(), messages })
+  });
+  if (!r.ok) {
+    let detail = ''; try { detail = (await r.json()).error?.message || ''; } catch (e) {}
+    const e = new Error('HTTP ' + r.status + ' ' + detail); e.status = r.status; throw e;
+  }
+  const data = await r.json();
+  const raw = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+  const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+  if (a < 0 || b <= a) throw new Error('risposta senza JSON: ' + raw.slice(0, 120));
+  const obj = JSON.parse(raw.slice(a, b + 1));
+  if (!obj.reply) throw new Error('risposta senza "reply"');
+  return obj;
+}
+function claudeErr(e) {
+  if (e.status === 401) return 'La chiave API non è valida. Controllala in Impostazioni.';
+  if (e.status === 429) return 'Troppe richieste a Claude. Aspetta qualche secondo e riprova.';
+  if (e.status === 400 || e.status === 404) return 'Claude ha rifiutato la richiesta (' + e.message.slice(0, 140) + '). Prova a cambiare modello in Impostazioni.';
+  if (e.status >= 500) return 'Il servizio di Claude non risponde in questo momento. Riprova.';
+  return 'Non sono riuscito a contattare Claude. Controlla la connessione e riprova.';
 }
 
+/* ===================== voice out ===================== */
+function speak(text) {
+  if (!('speechSynthesis' in window) || !text) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'en-US'; u.rate = 0.95;
+    const v = speechSynthesis.getVoices().filter(x => /^en[-_]/i.test(x.lang));
+    const pick = v.find(x => /en[-_]US/i.test(x.lang) && x.localService) || v.find(x => /en[-_]US/i.test(x.lang)) || v[0];
+    if (pick) u.voice = pick;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+let unlocked = false;
+function unlockSpeech() { if (unlocked || !('speechSynthesis' in window)) return; unlocked = true; try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) {} }
+
+/* ===================== rendering ===================== */
+const toEnd = () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+function themBubble(text) {
+  const b = el('div', 'bub them'); const who = el('div', 'who', 'Partner');
+  const s = el('button', 'say', 'Ascolta'); s.type = 'button'; s.onclick = () => speak(text); who.append(s);
+  b.append(who, el('div', '', text)); $('chat').append(b); return b;
+}
+function renderTurn(turn, text, r, scored, flu, timing) {
+  turn.replaceChildren();
+  const b = el('div', 'bub me'); b.style.alignSelf = 'flex-end'; b.append(el('div', 'who', 'Tu'));
+  const detail = el('div', 'detail'); detail.hidden = true;
+  if (scored && scored.length) {
+    const ws = el('div', 'words');
+    scored.forEach(x => {
+      const cls = x.score == null ? '' : x.score >= 0.85 ? ' g' : x.score >= 0.6 ? ' a' : ' r';
+      const btn = el('button', 'w' + cls, x.w); btn.type = 'button'; btn.setAttribute('aria-pressed', 'false');
+      btn.onclick = () => {
+        const open = btn.getAttribute('aria-pressed') === 'true';
+        ws.querySelectorAll('.w').forEach(o => o.setAttribute('aria-pressed', 'false'));
+        if (open) { detail.hidden = true; return; }
+        btn.setAttribute('aria-pressed', 'true'); showDetail(detail, x);
+      };
+      ws.append(btn);
+    });
+    b.append(ws);
+  } else b.append(el('div', '', text));
+  turn.append(b, detail);
+
+  const fb = el('div', 'fb');
+  if (scored && scored.length) {
+    const valid = scored.filter(x => x.score != null);
+    const avg = valid.length ? Math.round(100 * valid.reduce((s, x) => s + x.score, 0) / valid.length) : null;
+    const bad = valid.filter(x => x.score < 0.6).length;
+    fb.append(el('div', '', avg == null ? 'Suoni non valutati.' : `Suoni: ${avg}% corretti${bad ? `, ${bad} ${bad === 1 ? 'parola' : 'parole'} da rivedere (in rosso)` : ''}. Tocca una parola per vedere i suoni.`));
+  }
+  if (r) {
+    if (r.praise) fb.append(el('div', '', String(r.praise)));
+    if (r.improved) { const x = el('div', 'better'); x.append(el('b', '', 'Più naturale'), document.createTextNode(String(r.improved))); fb.append(x); }
+    (Array.isArray(r.notes) ? r.notes.slice(0, 3) : []).forEach(nn => {
+      const d = el('div', 'note'); d.append(el('span', 'pill', nn.type === 'word' ? 'Lessico' : 'Grammatica'), el('s', '', String(nn.you || '')), document.createTextNode(' → ' + String(nn.better || '')));
+      d.append(el('div', 'muted small', String(nn.why || ''))); fb.append(d);
+    });
+  }
+  const stats = el('div', 'stats');
+  if (flu) {
+    if (flu.wpm) stats.append(el('span', '', `${flu.wpm} parole/min (naturale: 120-150)`));
+    stats.append(el('span', '', flu.pauses ? `${flu.pauses} ${flu.pauses === 1 ? 'pausa lunga' : 'pause lunghe'}, ${flu.pauseT.toFixed(1)} s` : 'nessuna pausa lunga'));
+  }
+  if (timing) stats.append(el('span', '', `analisi ${timing.toFixed(1)} s`));
+  fb.append(stats); turn.append(fb);
+}
+function showDetail(box, x) {
+  box.replaceChildren(); box.hidden = false;
+  const head = el('div', 'row'); head.append(el('strong', '', x.w));
+  const s = el('button', 'say', 'Ascolta'); s.type = 'button'; s.onclick = () => speak(x.w); head.append(s); box.append(head);
+  const line = el('div', 'ipa');
+  x.ops.forEach(o => {
+    const sp = el('span', o.st === 'near' ? 'ok' : o.st, o.st === 'ins' ? '+' + o.got : o.exp);
+    if (o.st === 'sub') sp.textContent = o.exp + '→' + o.got;
+    line.append(sp);
+  });
+  box.append(line);
+  const lastExp = x.ops.map(o => o.exp).lastIndexOf(x.ops.filter(o => o.exp).slice(-1)[0]?.exp);
+  const tips = []; x.ops.forEach((o, i) => { if (o.st === 'sub' || o.st === 'del' || o.st === 'ins') { const t = tipFor(o, i >= lastExp); if (!tips.includes(t)) tips.push(t); } });
+  if (!tips.length) box.append(el('div', 'muted small', 'Tutti i suoni riconosciuti.'));
+  tips.slice(0, 4).forEach(t => box.append(el('div', 'small', t)));
+}
+function renderWeak() {
+  const top = Object.entries(st.weak).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  $('weak-panel').hidden = !top.length; $('weak').replaceChildren(...top.map(([p, n]) => el('span', 'chip', `${p} ×${n}`)));
+}
+function resetTalk() {
+  st.turns = []; st.weak = {}; $('chat').replaceChildren(); renderWeak();
+  themBubble(st.scenario.open);
+}
+function refresh() {
+  const modelsOk = !!(asr && ph), keyOk = $('key').value.trim().length > 10;
+  $('rec').disabled = !modelsOk || !keyOk || st.busy;
+  $('rec').classList.toggle('on', st.recording);
+  const t = $('rec-title'), n = $('rec-note');
+  if (st.recording) { t.textContent = 'Ti ascolto'; n.textContent = 'Premi di nuovo quando hai finito.'; }
+  else if (st.busy) { t.textContent = 'Analizzo la tua voce…'; n.textContent = 'Qualche secondo.'; }
+  else if (!modelsOk) { t.textContent = 'Carica prima i modelli'; n.textContent = 'Apri Impostazioni qui sopra.'; }
+  else if (!keyOk) { t.textContent = 'Manca la chiave API'; n.textContent = 'Inseriscila in Impostazioni per avere il dialogo.'; }
+  else { t.textContent = 'Premi e rispondi in inglese'; n.textContent = 'Parla liberamente, poi premi di nuovo.'; }
+}
+
+/* ===================== recording + turn ===================== */
+let rec = null, chunks = [], stream = null;
+async function toggleRec() {
+  if (st.busy) return;
+  if (rec && rec.state === 'recording') { rec.stop(); return; }
+  clearErr(); unlockSpeech(); try { speechSynthesis.cancel(); } catch (e) {}
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { fail('Il microfono non è accessibile. Consenti il microfono per questa pagina nelle impostazioni del browser.', e); return; }
+  chunks = []; rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); st.recording = false; handleAudio(new Blob(chunks, { type: rec.mimeType })); };
+  rec.start(); st.recording = true; $('setup').open = false; refresh();
+}
+async function decode16k(blob) {
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  try { const buf = await ctx.decodeAudioData(await blob.arrayBuffer()); return buf.getChannelData(0).slice(); } finally { ctx.close(); }
+}
+async function handleAudio(blob) {
+  st.busy = true; refresh();
+  const turn = el('div', 'turn'); turn.append(el('div', 'thinking', 'Ascolto la registrazione…')); $('chat').append(turn); toEnd();
+  const t0 = performance.now();
+  try {
+    const audio = await decode16k(blob); const secs = audio.length / 16000;
+    if (secs < 0.6) throw Object.assign(new Error('short'), { user: 'Registrazione troppo corta. Riprova.' });
+    const a = await asr(audio, secs > 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {});
+    const text = (a.text || '').replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim();
+    log('whisper:', text);
+    if (!text) throw Object.assign(new Error('empty'), { user: 'Non ho sentito parole. Avvicina il telefono e riprova.' });
+    turn.replaceChildren(el('div', 'bub me', text), el('div', 'thinking', 'Valuto i suoni e preparo la risposta…')); turn.firstChild.style.alignSelf = 'flex-end'; toEnd();
+
+    const [cl, pr] = await Promise.allSettled([askClaude(text), phones(audio)]);
+    if (pr.status === 'fulfilled') log('fonemi:', pr.value.join(' ')); else log('fonemi ERRORE', String(pr.reason));
+    const flu = fluency(audio, text.split(/\s+/).length);
+    const timing = (performance.now() - t0) / 1000;
+
+    if (cl.status !== 'fulfilled') {
+      renderTurn(turn, text, null, null, flu, timing);
+      fail(claudeErr(cl.reason), cl.reason); return;
+    }
+    const r = cl.value; let scored = null;
+    const words = Array.isArray(r.words) ? r.words.filter(x => x && x.w && Array.isArray(x.p)) : [];
+    if (words.length && pr.status === 'fulfilled') {
+      scored = scoreWords(words, pr.value);
+      scored.forEach(x => x.ops.forEach(o => { if ((o.st === 'sub' || o.st === 'del') && o.exp) st.weak[o.exp] = (st.weak[o.exp] || 0) + 1; }));
+      log('attesi:', words.map(x => x.p.join('')).join(' '));
+    }
+    st.turns.push({ role: 'user', content: text }, { role: 'assistant', content: JSON.stringify({ reply: r.reply }) });
+    renderTurn(turn, text, r, scored, flu, timing); renderWeak();
+    themBubble(String(r.reply)); speak(String(r.reply)); toEnd();
+  } catch (e) {
+    turn.remove(); fail(e.user || 'L\'analisi non è riuscita. Riprova.', e);
+  } finally { st.busy = false; refresh(); }
+}
+
+/* ===================== boot ===================== */
+for (const s of SCENARIOS) { const o = el('option', '', s.name); o.value = s.id; $('scenario').append(o); }
+$('key').value = store.get('sc.key'); $('model').value = store.get('sc.model') || 'claude-haiku-5-5'; if (!$('model').value) $('model').selectedIndex = 0;
+$('level').value = store.get('sc.level') || 'B1';
+$('key').oninput = () => { store.set('sc.key', $('key').value.trim()); refresh(); };
+$('model').onchange = () => store.set('sc.model', $('model').value);
+$('level').onchange = () => store.set('sc.level', $('level').value);
+$('scenario').onchange = e => { st.scenario = SCENARIOS.find(s => s.id === e.target.value) || SCENARIOS[0]; resetTalk(); };
+$('restart').onclick = () => { if (!st.busy && !st.recording) resetTalk(); };
 $('load').onclick = loadAll;
 $('rec').onclick = toggleRec;
 window.addEventListener('error', e => log('errore pagina:', e.message));
 window.addEventListener('unhandledrejection', e => log('promise:', String(e.reason && (e.reason.message || e.reason))));
+resetTalk(); refresh();
 </script>
 </body>
 </html>
