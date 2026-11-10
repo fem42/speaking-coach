@@ -90,7 +90,7 @@ details>summary{cursor:pointer;font-weight:600}
   <details class="panel" id="setup" open>
     <summary>Impostazioni</summary>
     <div class="model"><span>Parole · Whisper</span><span class="state" id="s-asr">non caricato</span><progress id="p-asr" max="100" value="0"></progress></div>
-    <div class="model"><span>Suoni · wav2vec2 fonemi</span><span class="state" id="s-ph">non caricato</span><progress id="p-ph" max="100" value="0"></progress></div>
+    <div class="model"><span id="ph-name">Suoni · wav2vec2</span><span class="state" id="s-ph">non caricato</span><progress id="p-ph" max="100" value="0"></progress></div>
     <div class="row"><button class="pri" id="load">Carica i modelli</button><span class="muted small" id="load-note">Il primo download è pesante: meglio in Wi-Fi.</span></div>
     <label class="field"><span class="label">Chiave API di Claude</span>
       <input type="password" id="key" autocomplete="off" placeholder="sk-ant-…"></label>
@@ -100,6 +100,7 @@ details>summary{cursor:pointer;font-weight:600}
       <label class="field"><span class="label">Livello</span><select id="level"><option>A2</option><option selected>B1</option><option>B2</option><option>C1</option></select></label>
       <label class="field"><span class="label">Modello Claude</span><select id="model"><option value="claude-haiku-5-5">Haiku (veloce)</option><option value="claude-sonnet-5-5">Sonnet (più preciso)</option></select></label>
     </div>
+    <label class="field"><span class="label">Modello dei suoni</span><select id="sound"><option value="light">Leggero (telefono)</option><option value="full">Dettagliato (solo computer, molto pesante)</option></select></label>
     <div class="row"><button id="restart">Nuova conversazione</button><button id="wipe">Cancella i modelli salvati</button></div>
     <p class="muted small" id="store-note"></p>
   </details>
@@ -150,6 +151,11 @@ const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2';
 const ASR_ID = 'Xenova/whisper-base.en';
 const PH_ID = 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX';
 const PH_DTYPES = ['q8', 'q4', 'fp16', 'fp32'];
+// light sound model: wav2vec2-base, hears English letter by letter; about a third of the size of the phoneme model
+const LIGHT_ID = 'Xenova/wav2vec2-base-960h';
+const LIGHT_VOCAB = ['<pad>', '<s>', '</s>', '<unk>', '|', 'E', 'T', 'A', 'O', 'N', 'I', 'H', 'S', 'R', 'D', 'L', 'U', 'M', 'W', 'C', 'F', 'G', 'Y', 'P', 'B', 'V', 'K', "'", 'X', 'J', 'Q', 'Z'];
+const soundMode = () => store.get('sc.sound') || (/iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) ? 'light' : 'full');
+const soundId = () => soundMode() === 'light' ? LIGHT_ID : PH_ID;
 const FRAME_S = 0.02, SR = 16000, MAX_REC_S = 40, CHUNK_S = 8;
 
 const SCENARIOS = [
@@ -270,7 +276,36 @@ function parsePhonemeLines(raw) {
   }
   return out;
 }
-window.__pure = { segs, align, scoreWords, fluency, chunkBounds, parsePhonemeLines };
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+const spellNumber = w => { const m = w.match(/^\D*(\d{1,2})\D*$/); if (!m) return w; const n = Number(m[1]); return n < 20 ? ONES[n] : TENS[Math.floor(n / 10)] + (n % 10 ? ONES[n % 10] : ''); };
+// expected letters for each word, for the light model
+function lettersOf(text) {
+  return text.split(/\s+/).filter(Boolean).map(w => ({ w, p: Array.from(spellNumber(w).toUpperCase().replace(/[^A-Z]/g, '')) }));
+}
+// tips from a letter-level comparison; key = what to count as a weak sound
+function tipLetters(x) {
+  const ops = x.ops, out = [], add = (tip, key) => { if (!out.some(t => t.tip === tip)) out.push({ tip, key }); };
+  let lastExp = -1; ops.forEach((o, i) => { if (o.exp) lastExp = i; });
+  const expIdx = ops.map((o, i) => o.exp ? i : -1).filter(i => i >= 0);
+  const done = new Set();
+  expIdx.forEach((i, k) => {   // TH
+    const a = ops[i], b = ops[expIdx[k + 1]];
+    if (a.exp === 'T' && b && b.exp === 'H' && (a.st === 'sub' || a.st === 'del' || b.st === 'sub' || b.st === 'del')) {
+      add('TH: punta della lingua tra i denti, l\'aria passa sopra. Non è una T, una D o una S.', 'TH'); done.add(i); done.add(expIdx[k + 1]);
+    }
+  });
+  ops.forEach((o, i) => {
+    if (done.has(i) || o.st === 'ok' || o.st === 'near') return;
+    if (o.st === 'ins') { if ('AEIOU'.includes(o.got) && i > lastExp) add('Hai aggiunto una vocale in fondo alla parola: chiudi sulla consonante.', 'vocale finale'); else add(`Suono in più: ${o.got}.`, null); }
+    else if (o.exp === 'H' && o.st === 'del' && i === expIdx[0]) add('La H iniziale va soffiata, come quando appanni un vetro.', 'H');
+    else if (o.exp === 'W' && o.got === 'V') add('W: labbra arrotondate, senza toccare i denti.', 'W');
+    else if (o.st === 'del') add(`Non ho sentito: ${o.exp}.`, null);
+    else add(`Atteso ${o.exp}, sentito ${o.got}.`, null);
+  });
+  return out;
+}
+window.__pure = { lettersOf, tipLetters, segs, align, scoreWords, fluency, chunkBounds, parsePhonemeLines };
 
 /* ===================== storage ===================== */
 const CACHE = 'transformers-cache';
@@ -322,6 +357,17 @@ async function loadAll() {
       ready('asr'); log('whisper pronto');
     }
     if (!ph) {
+     if (soundMode() === 'light') {
+      $('s-ph').textContent = from(LIGHT_ID); log('inizio modello suoni leggero,', from(LIGHT_ID));
+      vocab = LIGHT_VOCAB; blankId = 0;
+      ph = await T.AutoModelForCTC.from_pretrained(LIGHT_ID, { dtype: 'q8', device: 'wasm', progress_callback: progressFor('ph') });
+      log('modello suoni leggero pronto'); ready('ph');
+      try {   // free the space taken by the heavy model, if it was ever downloaded
+        const c = await caches.open(CACHE); let n = 0;
+        for (const req of await c.keys()) if (req.url.includes(PH_ID)) { await c.delete(req); n++; }
+        if (n) log('rimossi dalla cache', n, 'file del modello pesante');
+      } catch (e) {}
+     } else {
       $('s-ph').textContent = from(PH_ID); log('inizio fonemi,', from(PH_ID));
       const r = await fetch(`https://huggingface.co/${PH_ID}/resolve/main/vocab.json`);
       if (!r.ok) throw new Error('vocab.json: HTTP ' + r.status);
@@ -338,10 +384,11 @@ async function loadAll() {
       }
       if (!ph) throw lastErr || new Error('modello fonemi non caricato');
       ready('ph');
+     }
     }
     $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.'; store.set('sc.loaded', '1'); store.del('sc.loading');
     const after = await storageReport();
-    if (!inCache(after, PH_ID)) { log('ATTENZIONE: il modello dei fonemi non è rimasto in cache'); $('store-note').textContent = 'Questo browser non è riuscito a salvare il modello dei suoni: verrà riscaricato a ogni apertura.'; }
+    if (!inCache(after, soundId())) { log('ATTENZIONE: il modello dei fonemi non è rimasto in cache'); $('store-note').textContent = 'Questo browser non è riuscito a salvare il modello dei suoni: verrà riscaricato a ogni apertura.'; }
     refresh();
   } catch (e) {
     fail('Non sono riuscito a caricare i modelli. Se succede di nuovo, premi "Cancella i modelli salvati" in Impostazioni e ricarica la pagina.', e);
@@ -394,7 +441,7 @@ function replySystem() {
   return `You are an English speaking coach inside a practice app for an Italian native speaker (CEFR level ${$('level').value}).
 Role-play as ${st.scenario.role}. Keep the conversation going naturally in English at the learner's level.
 Each user message is an automatic transcript of what the learner said aloud. A separate audio model scores their sounds, so you never comment on pronunciation.
-${weak.length ? `The learner currently struggles with these sounds (IPA): ${weak.join(' ')}. Steer your questions so that natural answers need words containing them.\n` : ''}
+${weak.length ? `The learner currently struggles with these English sounds: ${weak.join(', ')}. Steer your questions so that natural answers need words containing them.\n` : ''}
 Reply with ONLY a JSON object, no markdown fences, in exactly this shape:
 {"reply": string, "improved": string, "praise": string, "notes": [{"type": "grammar"|"word", "you": string, "better": string, "why": string}]}
 
@@ -527,7 +574,12 @@ function showDetail(box, x) {
   x.ops.forEach(o => { const sp = el('span', o.st === 'near' ? 'ok' : o.st, o.st === 'ins' ? '+' + o.got : o.st === 'sub' ? o.exp + '→' + o.got : o.exp); line.append(sp); });
   box.append(line);
   let lastExp = -1; x.ops.forEach((o, i) => { if (o.exp) lastExp = i; });
-  const tips = []; x.ops.forEach((o, i) => { if (o.st === 'sub' || o.st === 'del' || o.st === 'ins') { const t = tipFor(o, i >= lastExp); if (!tips.includes(t)) tips.push(t); } });
+  let tips = [];
+  if (x.kind === 'letters') {
+    const heard = x.ops.filter(o => o.got).map(o => o.got).join('');
+    if (x.ops.some(o => o.st !== 'ok' && o.st !== 'near')) box.append(el('div', 'small', `Il modello ha sentito: ${heard || '(niente)'}`));
+    tips = tipLetters(x).map(t => t.tip);
+  } else x.ops.forEach((o, i) => { if (o.st === 'sub' || o.st === 'del' || o.st === 'ins') { const t = tipFor(o, i >= lastExp); if (!tips.includes(t)) tips.push(t); } });
   if (!tips.length) box.append(el('div', 'muted small', 'Tutti i suoni riconosciuti.'));
   tips.slice(0, 4).forEach(t => box.append(el('div', 'small', t)));
 }
@@ -599,10 +651,15 @@ async function doReply(turn, r) {
 }
 async function doSounds(turn, r, audio) {
   try {
-    const [exp, got] = await Promise.all([askPhonemes(r.text), phones(audio)]);
-    log('fonemi sentiti:', got.join(' ')); log('fonemi attesi:', exp.map(x => x.p.join('')).join(' '));
+    const light = soundMode() === 'light';
+    const [exp, got] = await Promise.all([light ? lettersOf(r.text) : askPhonemes(r.text), phones(audio)]);
+    log('suoni sentiti:', got.join(light ? '' : ' ')); log('suoni attesi:', exp.map(x => x.p.join('')).join(' '));
     r.scored = scoreWords(exp, got);
-    r.scored.forEach(x => x.ops.forEach(o => { if ((o.st === 'sub' || o.st === 'del') && o.exp) st.weak[o.exp] = (st.weak[o.exp] || 0) + 1; }));
+    r.scored.forEach(x => {
+      x.kind = light ? 'letters' : 'ipa';
+      if (light) tipLetters(x).forEach(t => { if (t.key) st.weak[t.key] = (st.weak[t.key] || 0) + 1; });
+      else x.ops.forEach(o => { if ((o.st === 'sub' || o.st === 'del') && o.exp) st.weak[o.exp] = (st.weak[o.exp] || 0) + 1; });
+    });
     renderWeak();
   } catch (e) {
     r.soundErr = e.status || /fonemi attesi/.test(e.message) ? 'Suoni non valutati: ' + claudeErr(e) : 'Suoni non valutati: il modello audio non è riuscito ad analizzare la registrazione.';
@@ -646,6 +703,13 @@ $('level').onchange = () => store.set('sc.level', $('level').value);
 $('scenario').onchange = e => { st.scenario = SCENARIOS.find(s => s.id === e.target.value) || SCENARIOS[0]; resetTalk(); };
 $('restart').onclick = () => { if (!st.busy && !st.recording) resetTalk(); };
 $('load').onclick = loadAll;
+$('sound').value = soundMode();
+$('sound').onchange = () => {   // a different sound model has to be loaded again
+  store.set('sc.sound', $('sound').value); store.del('sc.dtype');
+  try { ph && ph.dispose && ph.dispose(); } catch (e) {}
+  ph = null; $('p-ph').value = 0; $('s-ph').textContent = 'non caricato'; $('s-ph').className = 'state';
+  $('load').hidden = false; $('load').disabled = false; $('load-note').textContent = 'Premi per caricare il modello scelto.'; refresh();
+};
 $('copylog').onclick = () => {
   const t = $('log');
   navigator.clipboard.writeText(t.value).then(() => { $('copy-note').textContent = 'Copiata.'; })
@@ -667,8 +731,8 @@ refresh();
 if (loadCrash || crashed) $('diag').open = true;
 if (loadCrash) {   // do not retry on our own: that is what makes Safari give up on the page
   $('setup').open = true;
-  fail('La pagina si è chiusa mentre caricava i modelli: su questo telefono occupano troppa memoria. Non li ricarico da solo. Apri "Diagnostica" in fondo, copia il testo e mandalo a Claude.');
-}
+  fail('La pagina si è chiusa mentre caricava i modelli: occupavano troppa memoria. Ora è selezionato il modello dei suoni leggero. Premi "Carica i modelli" per riprovare.');
+} else if (store.get('sc.loaded') && soundMode() === 'light') { $('setup').open = !$('key').value; loadAll(); }
 </script>
 </body>
 </html>
