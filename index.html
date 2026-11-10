@@ -112,9 +112,9 @@ details>summary{cursor:pointer;font-weight:600}
     <p class="muted small">Il partner cercherà di farti usare parole con questi suoni.</p>
   </section>
 
-  <details class="panel">
+  <details class="panel" id="diag">
     <summary>Diagnostica</summary>
-    <p class="muted small">Se qualcosa non va, copia questo testo e incollalo a Claude.</p>
+    <div class="row"><button id="copylog">Copia diagnostica</button><span class="muted small" id="copy-note">Poi incollala a Claude.</span></div>
     <textarea id="log" readonly rows="8" style="width:100%;font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px"></textarea>
   </details>
 </main>
@@ -562,7 +562,7 @@ function refresh() {
   const t = $('rec-title'), n = $('rec-note');
   if (st.recording) { t.textContent = 'Ti ascolto'; n.textContent = 'Premi di nuovo quando hai finito.'; }
   else if (st.busy) { t.textContent = 'Analizzo la tua voce…'; n.textContent = 'Qualche secondo.'; }
-  else if (!modelsOk) { t.textContent = store.get('sc.loaded') ? 'Carico i modelli…' : 'Carica prima i modelli'; n.textContent = 'Vedi Impostazioni qui sopra.'; }
+  else if (!modelsOk) { t.textContent = 'Carica prima i modelli'; n.textContent = 'Premi "Carica i modelli" in Impostazioni.'; }
   else if (!keyOk) { t.textContent = 'Manca la chiave API'; n.textContent = 'Inseriscila in Impostazioni per avere il dialogo.'; }
   else { t.textContent = 'Premi e rispondi in inglese'; n.textContent = `Parla liberamente, fino a ${MAX_REC_S} secondi.`; }
 }
@@ -646,6 +646,11 @@ $('level').onchange = () => store.set('sc.level', $('level').value);
 $('scenario').onchange = e => { st.scenario = SCENARIOS.find(s => s.id === e.target.value) || SCENARIOS[0]; resetTalk(); };
 $('restart').onclick = () => { if (!st.busy && !st.recording) resetTalk(); };
 $('load').onclick = loadAll;
+$('copylog').onclick = () => {
+  const t = $('log');
+  navigator.clipboard.writeText(t.value).then(() => { $('copy-note').textContent = 'Copiata.'; })
+    .catch(() => { t.focus(); t.select(); $('copy-note').textContent = 'Testo selezionato: tocca Copia.'; });
+};
 $('wipe').onclick = async () => {
   if (st.busy || st.recording) return;
   try { await caches.delete(CACHE); } catch (e) {}
@@ -659,10 +664,11 @@ if (!restore()) resetTalk();
 if (crashed) fail('La pagina si è ricaricata durante un\'analisi, probabilmente per poca memoria libera. La conversazione è stata recuperata. Chiudi le altre schede e prova con frasi più brevi.');
 $('log').value = logLines.join('\n');
 refresh();
+if (loadCrash || crashed) $('diag').open = true;
 if (loadCrash) {   // do not retry on our own: that is what makes Safari give up on the page
   $('setup').open = true;
   fail('La pagina si è chiusa mentre caricava i modelli: su questo telefono occupano troppa memoria. Non li ricarico da solo. Apri "Diagnostica" in fondo, copia il testo e mandalo a Claude.');
-} else if (store.get('sc.loaded')) { $('setup').open = !$('key').value; loadAll(); }
+}
 </script>
 </body>
 </html>
