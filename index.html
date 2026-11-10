@@ -91,7 +91,7 @@ details>summary{cursor:pointer;font-weight:600}
     <summary>Impostazioni</summary>
     <div class="model"><span>Parole · Whisper</span><span class="state" id="s-asr">non caricato</span><progress id="p-asr" max="100" value="0"></progress></div>
     <div class="model"><span>Suoni · wav2vec2 fonemi</span><span class="state" id="s-ph">non caricato</span><progress id="p-ph" max="100" value="0"></progress></div>
-    <div class="row"><button class="pri" id="load">Carica i modelli</button><span class="muted small" id="load-note">Serve una volta per ogni apertura. Meglio in Wi-Fi.</span></div>
+    <div class="row"><button class="pri" id="load">Carica i modelli</button><span class="muted small" id="load-note">Il primo download è pesante: meglio in Wi-Fi.</span></div>
     <label class="field"><span class="label">Chiave API di Claude</span>
       <input type="password" id="key" autocomplete="off" placeholder="sk-ant-…"></label>
     <p class="muted small">La chiave resta salvata solo in questo browser e viene inviata soltanto ad Anthropic. Si crea nella console per sviluppatori di Anthropic ed è a consumo.</p>
@@ -100,7 +100,8 @@ details>summary{cursor:pointer;font-weight:600}
       <label class="field"><span class="label">Livello</span><select id="level"><option>A2</option><option selected>B1</option><option>B2</option><option>C1</option></select></label>
       <label class="field"><span class="label">Modello Claude</span><select id="model"><option value="claude-haiku-5-5">Haiku (veloce)</option><option value="claude-sonnet-5-5">Sonnet (più preciso)</option></select></label>
     </div>
-    <div class="row"><button id="restart">Nuova conversazione</button></div>
+    <div class="row"><button id="restart">Nuova conversazione</button><button id="wipe">Cancella i modelli salvati</button></div>
+    <p class="muted small" id="store-note"></p>
   </details>
 
   <section class="chat" id="chat" aria-live="polite"></section>
@@ -269,6 +270,29 @@ function parsePhonemeLines(raw) {
 }
 window.__pure = { segs, align, scoreWords, fluency, chunkBounds, parsePhonemeLines };
 
+/* ===================== storage ===================== */
+const CACHE = 'transformers-cache';
+async function cachedFiles() {   // [{url, mb}] of what the browser kept
+  try {
+    if (!('caches' in window) || !(await caches.has(CACHE))) return [];
+    const c = await caches.open(CACHE), out = [];
+    for (const req of await c.keys()) { const r = await c.match(req); out.push({ url: req.url, mb: Math.round(Number(r && r.headers.get('content-length') || 0) / 1048576) }); }
+    return out;
+  } catch (e) { log('cache non leggibile:', String(e.message || e)); return []; }
+}
+async function storageReport() {
+  const files = await cachedFiles();
+  let est = {}; try { est = await navigator.storage.estimate(); } catch (e) {}
+  let persisted = '?'; try { persisted = await navigator.storage.persisted(); } catch (e) {}
+  const used = Math.round((est.usage || 0) / 1048576), quota = Math.round((est.quota || 0) / 1048576);
+  log('spazio usato', used, 'MB di', quota, 'MB | persistente:', persisted, '| file in cache:', files.length);
+  files.filter(f => f.mb >= 1 || /onnx/.test(f.url)).forEach(f => log('  cache:', f.url.split('/resolve/main/')[0].split('/').slice(-1)[0], f.url.split('/').pop(), f.mb, 'MB'));
+  $('store-note').textContent = files.length ? `Modelli salvati sul telefono: ${used} MB.` : 'Nessun modello salvato sul telefono: verranno scaricati.';
+  return files;
+}
+const inCache = (files, id) => files.some(f => f.url.includes(id + '/resolve/main/onnx/'));
+const missingFile = e => /404|not found|could not locate|no such file/i.test(String(e && (e.message || e)));
+
 /* ===================== models ===================== */
 function progressFor(key) {
   const files = {};
@@ -286,27 +310,39 @@ async function loadAll() {
   clearErr(); $('load').disabled = true;
   try {
     if (!T) { T = await import(TJS); T.env.allowLocalModels = false; log('transformers.js', T.env.version); }
+    try { if (navigator.storage && navigator.storage.persist) log('archiviazione persistente:', await navigator.storage.persist()); } catch (e) {}
+    const files = await storageReport();
+    const from = id => inCache(files, id) ? 'leggo dal telefono…' : 'scarico…';
     if (!asr) {
-      $('s-asr').textContent = 'carico…';
+      $('s-asr').textContent = from(ASR_ID);
       asr = await T.pipeline('automatic-speech-recognition', ASR_ID, { dtype: 'q8', device: 'wasm', progress_callback: progressFor('asr') });
       ready('asr'); log('whisper pronto');
     }
     if (!ph) {
-      $('s-ph').textContent = 'carico…';
+      $('s-ph').textContent = from(PH_ID);
       const r = await fetch(`https://huggingface.co/${PH_ID}/resolve/main/vocab.json`);
       if (!r.ok) throw new Error('vocab.json: HTTP ' + r.status);
       const v = await r.json(); vocab = []; for (const [tok, id] of Object.entries(v)) vocab[id] = tok; blankId = v['<pad>'] ?? 0;
       let lastErr = null;
-      for (const dtype of PH_DTYPES) {
-        try { ph = await T.AutoModelForCTC.from_pretrained(PH_ID, { dtype, device: 'wasm', progress_callback: progressFor('ph') }); log('fonemi pronto, dtype', dtype); break; }
-        catch (e) { lastErr = e; log('dtype', dtype, 'no:', String(e.message || e).slice(0, 160)); }
+      const known = store.get('sc.dtype');
+      for (const dtype of (known ? [known] : PH_DTYPES)) {
+        try { ph = await T.AutoModelForCTC.from_pretrained(PH_ID, { dtype, device: 'wasm', progress_callback: progressFor('ph') }); log('fonemi pronto, dtype', dtype); store.set('sc.dtype', dtype); break; }
+        catch (e) {
+          lastErr = e; log('dtype', dtype, 'no:', String(e.message || e).slice(0, 300));
+          if (!missingFile(e)) break;   // memory or storage problem: a bigger variant would only make it worse
+        }
       }
       if (!ph) throw lastErr || new Error('modello fonemi non caricato');
       ready('ph');
     }
     $('load').hidden = true; $('load-note').textContent = 'Modelli pronti.'; store.set('sc.loaded', '1');
+    const after = await storageReport();
+    if (!inCache(after, PH_ID)) { log('ATTENZIONE: il modello dei fonemi non è rimasto in cache'); $('store-note').textContent = 'Questo browser non è riuscito a salvare il modello dei suoni: verrà riscaricato a ogni apertura.'; }
     refresh();
-  } catch (e) { fail('Non sono riuscito a caricare i modelli. Controlla la connessione e riprova.', e); $('load').disabled = false; }
+  } catch (e) {
+    fail('Non sono riuscito a caricare i modelli. Se succede di nuovo, premi "Cancella i modelli salvati" in Impostazioni e ricarica la pagina.', e);
+    $('load').disabled = false; $('setup').open = true; storageReport();
+  }
 }
 
 async function phonesOne(audio) {
@@ -606,6 +642,12 @@ $('level').onchange = () => store.set('sc.level', $('level').value);
 $('scenario').onchange = e => { st.scenario = SCENARIOS.find(s => s.id === e.target.value) || SCENARIOS[0]; resetTalk(); };
 $('restart').onclick = () => { if (!st.busy && !st.recording) resetTalk(); };
 $('load').onclick = loadAll;
+$('wipe').onclick = async () => {
+  if (st.busy || st.recording) return;
+  try { await caches.delete(CACHE); } catch (e) {}
+  store.del('sc.loaded'); store.del('sc.dtype'); log('modelli salvati cancellati');
+  location.reload();
+};
 $('rec').onclick = toggleRec;
 window.addEventListener('error', e => log('errore pagina:', e.message));
 window.addEventListener('unhandledrejection', e => log('promise:', String(e.reason && (e.reason.message || e.reason)).slice(0, 300)));
