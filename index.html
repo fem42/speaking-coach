@@ -171,7 +171,7 @@ const SCENARIOS = [
 const st = { scenario: SCENARIOS[0], turns: [], weak: {}, view: [], busy: false, recording: false };
 let T = null, asr = null, ph = null, vocab = null, blankId = 0;
 
-const BUILD = '2026-11-10.10';
+const BUILD = '2026-11-10.11';
 // one address, always the latest version: drop any ?v=… and, if the server has a newer page than the one Safari kept, fetch it and reload once
 if (location.search) history.replaceState(null, '', location.pathname + location.hash);
 async function checkUpdate() {
@@ -571,6 +571,12 @@ function renderTurn(turn, rec) {
     const avg = valid.length ? Math.round(100 * valid.reduce((s, x) => s + x.score, 0) / valid.length) : null;
     const bad = valid.filter(x => x.score < 0.6).length;
     fb.append(el('div', '', avg == null ? 'Suoni non valutati.' : `Suoni: ${avg}% corretti${bad ? `, ${bad} ${bad === 1 ? 'parola' : 'parole'} da rivedere (in rosso)` : ''}. Tocca una parola per i dettagli.`));
+    if (rec.history && rec.history.length > 1) fb.append(el('div', 'small', 'Tentativi: ' + rec.history.map(pct).join(' → ')));
+    const row = el('div', 'row'); const again = el('button', 'pri', 'Ripeti la frase'); again.type = 'button'; again.disabled = !ph;
+    const note = el('span', 'muted small', ph ? 'Stesse parole, per migliorare i suoni.' : 'Carica prima i modelli.');
+    again.onclick = () => retrySentence(again, note, turn, rec);
+    row.append(again, note); fb.append(row);
+    if (rec.retryMsg) fb.append(el('div', 'err small', rec.retryMsg));
   } else if (rec.soundErr) fb.append(el('div', 'err small', rec.soundErr));
   else fb.append(el('div', 'thinking', 'Valuto i suoni…'));
   // reply feedback
@@ -612,17 +618,12 @@ function showDetail(box, x, turn, rec, xi) {
   } else x.ops.forEach((o, i) => { if (o.st === 'sub' || o.st === 'del' || o.st === 'ins') { const t = tipFor(o, i >= lastExp); if (!tips.includes(t)) tips.push(t); } });
   if (!tips.length) box.append(el('div', 'muted small', 'Tutti i suoni riconosciuti.'));
   tips.slice(0, 4).forEach(t => box.append(el('div', 'small', t)));
-  if (turn) {   // say just this word again and see whether its score improves
-    const row = el('div', 'row'); const btn = el('button', 'pri', 'Ripeti questa parola'); btn.type = 'button'; btn.disabled = !ph;
-    const note = el('span', 'muted small', ph ? '' : 'Carica prima i modelli.');
-    btn.onclick = () => retryWord(btn, note, x, turn, rec, xi);
-    row.append(btn, note); box.append(row);
-    if (x.last) box.append(el('div', 'small', x.last));
-  }
 }
 const pct = v => v == null ? 'n/d' : Math.round(v * 100) + '%';
+const avgScore = scored => { const v = (scored || []).filter(x => x.score != null); return v.length ? v.reduce((t, x) => t + x.score, 0) / v.length : null; };
+// say the whole sentence again: same words, new recording, new scores next to the old ones
 let clip = null;
-async function retryWord(btn, note, x, turn, rec, xi) {
+async function retrySentence(btn, note, turn, rec) {
   if (clip) { clip.stop(); return; }
   if (st.busy || st.recording || !ph) return;
   try { speechSynthesis.cancel(); } catch (e) {}
@@ -630,38 +631,34 @@ async function retryWord(btn, note, x, turn, rec, xi) {
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
   catch (e) { note.textContent = 'Microfono non accessibile.'; return; }
   const parts = []; const mr = new MediaRecorder(stream); clip = mr; st.busy = true; refresh();
-  // the microphone needs a moment to open: anything said before "Parla ora" would be lost
   btn.textContent = 'Ferma'; btn.disabled = true; note.textContent = 'Aspetta…';
   let timer = null;
-  const go = () => {
+  const go = () => {   // the microphone needs a moment to open
     if (mr.state !== 'recording' || timer) return;
-    btn.disabled = false; note.textContent = `Parla ora: "${x.w.replace(/[.,!?;:]+$/, '')}". Poi premi Ferma.`;
-    timer = setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, 4000);
+    btn.disabled = false; note.textContent = 'Parla ora: ripeti la frase, poi premi Ferma.';
+    timer = setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, MAX_REC_S * 1000);
   };
   mr.onstart = () => setTimeout(go, 450);
   setTimeout(go, 1500);
   mr.ondataavailable = e => { if (e.data.size) parts.push(e.data); };
   mr.onstop = async () => {
-    clearTimeout(timer); stream.getTracks().forEach(t => t.stop()); clip = null; btn.disabled = true; btn.textContent = 'Analizzo…';
+    clearTimeout(timer); stream.getTracks().forEach(t => t.stop()); clip = null; btn.disabled = true; btn.textContent = 'Analizzo…'; note.textContent = '';
     try {
       const audio = await decode16k(new Blob(parts, { type: mr.mimeType }));
       const reg = speechRegion(audio);
-      log('ripetizione audio', (audio.length / SR).toFixed(2), 's, voce:', reg ? `${(reg.a / SR).toFixed(2)}-${(reg.b / SR).toFixed(2)} s, picco ${reg.peak.toFixed(3)}` : 'nessuna');
-      if (!reg) throw Object.assign(new Error('silenzio'), { user: 'Non ho sentito la voce nella registrazione. Aspetta la scritta "Parla ora" e parla vicino al microfono.' });
-      const got = await phones(padClip(audio, reg));
-      if (!got.length) throw Object.assign(new Error('non riconosciuta'), { user: 'Ho sentito la voce ma non ho riconosciuto la parola. Dilla un po\' più lentamente, a voce piena.' });
-      const letters = x.kind === 'letters';
-      const exp = (x.p && x.p.length) ? x.p : letters ? lettersOf(x.w)[0].p : x.ops.filter(o => o.exp).map(o => o.exp);
-      const res = scoreWords([{ w: x.w, p: exp }], got)[0]; const before = x.score;
-      const heard = res.ops.filter(o => o.got).map(o => o.got).join(letters ? '' : ' ');
-      x.tries = (x.tries || 0) + 1;
-      const better = res.score != null && (before == null || res.score > before);
-      x.last = `Tentativo ${x.tries}: ${pct(res.score)}, prima ${pct(before)}. ${better ? 'Meglio.' : res.score === before ? 'Uguale.' : 'Non ancora.'} Ho sentito: ${heard || 'niente'}.`;
-      if (better) { x.score = res.score; x.ops = res.ops; }
-      log('ripetizione', x.w, '→', heard, pct(res.score));
-    } catch (e) { x.last = e.user || 'Non sono riuscito ad analizzare la ripetizione. Riprova.'; log('ripetizione ERRORE', String(e.message || e).slice(0, 200)); }
-    st.busy = false; refresh();
-    rec._open = xi; renderTurn(turn, rec); delete rec._open; save();
+      log('ripetizione frase', (audio.length / SR).toFixed(1), 's, voce:', reg ? 'picco ' + reg.peak.toFixed(3) : 'nessuna');
+      if (!reg) throw Object.assign(new Error('silenzio'), { user: 'Non ho sentito la voce. Aspetta la scritta "Parla ora" e parla vicino al microfono.' });
+      const got = await phones(audio);
+      if (!got.length) throw Object.assign(new Error('vuoto'), { user: 'Ho sentito la voce ma non ho riconosciuto i suoni. Riprova a voce piena.' });
+      const kind = rec.scored[0].kind || 'ipa';
+      const exp = rec.scored.map(x => ({ w: x.w, p: (x.p && x.p.length) ? x.p : kind === 'letters' ? lettersOf(x.w)[0].p : x.ops.filter(o => o.exp).map(o => o.exp) }));
+      const res = scoreWords(exp, got); res.forEach(x => { x.kind = kind; });
+      if (!rec.history) rec.history = [avgScore(rec.scored)];
+      rec.history.push(avgScore(res)); rec.history = rec.history.slice(-6);
+      rec.scored = res; rec.retryMsg = null;
+      log('ripetizione frase →', got.join(kind === 'letters' ? '' : ' '), pct(avgScore(res)));
+    } catch (e) { rec.retryMsg = e.user || 'Non sono riuscito ad analizzare la ripetizione. Riprova.'; log('ripetizione ERRORE', String(e.message || e).slice(0, 200)); }
+    st.busy = false; refresh(); renderTurn(turn, rec); save();
   };
   mr.start();
 }
